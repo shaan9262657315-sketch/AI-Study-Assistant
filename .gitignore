@@ -1,0 +1,15 @@
+.env
+**/.env
+venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+students.db
+**/students.db
+chroma_db/
+**/chroma_db/
+dist/
+**/dist/
+node_modules/
+**/node_modules/
