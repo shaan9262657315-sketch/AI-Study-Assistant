@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-import requests
 
 from dependencies import get_current_user
 from models import Student
+from gemini import ask_gemini
 
 
 router = APIRouter(
@@ -40,42 +40,11 @@ Give the answer in simple language.
 """
 
     try:
-
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "llama3.2:3b",
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.2
-                }
-            },
-            timeout=120
-        )
-
-        response.raise_for_status()
-
-        result = response.json()
+        answer = ask_gemini(prompt)
 
         return {
-            "answer": result.get(
-                "response",
-                "Sorry, I could not generate an answer."
-            )
+            "answer": answer
         }
-
-    except requests.exceptions.ConnectionError:
-        raise HTTPException(
-            status_code=503,
-            detail="Ollama is not running."
-        )
-
-    except requests.exceptions.Timeout:
-        raise HTTPException(
-            status_code=504,
-            detail="Ollama took too long to respond."
-        )
 
     except Exception as e:
         raise HTTPException(
