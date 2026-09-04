@@ -5,8 +5,37 @@ from typing import List, Optional
 import pymupdf
 import requests
 
+from dotenv import load_dotenv
+from google import genai
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+
+# =========================================================
+# ENVIRONMENT VARIABLES
+# =========================================================
+
+load_dotenv()
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Local  -> ollama
+# Production -> gemini
+AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama")
+
+
+# =========================================================
+# GEMINI CLIENT
+# =========================================================
+
+gemini_client = None
+
+if GEMINI_API_KEY:
+
+    gemini_client = genai.Client(
+        api_key=GEMINI_API_KEY
+    )
 
 
 # =========================================================
@@ -16,17 +45,26 @@ from sklearn.metrics.pairwise import cosine_similarity
 PDF_FOLDER = "pdfs"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
+
 OLLAMA_MODEL = "llama3.2:3b"
+
+GEMINI_MODEL = "gemini-3.6-flash"
 
 # Agar best similarity isse kam hai,
 # to PDF ko relevant nahi maana jayega.
+
 PDF_RELEVANCE_THRESHOLD = 0.08
 
-os.makedirs(PDF_FOLDER, exist_ok=True)
+os.makedirs(
+    PDF_FOLDER,
+    exist_ok=True
+)
 
 
 documents = []
+
 vectorizer = None
+
 tfidf_matrix = None
 
 
@@ -36,7 +74,10 @@ tfidf_matrix = None
 
 def clean_text(text: str):
 
-    text = text.replace("\x00", " ")
+    text = text.replace(
+        "\x00",
+        " "
+    )
 
     text = re.sub(
         r"\s+",
@@ -55,21 +96,32 @@ def normalize_query(query: str):
 
     query = query.lower().strip()
 
-    # Common student abbreviations / variations
     replacements = {
+
         "oops": "oop object oriented programming",
+
         "o.o.p": "oop object oriented programming",
+
         "o.o.p.s": "oop object oriented programming",
+
         "object oriented": "object oriented programming",
+
         "object-oriented": "object oriented programming",
+
         "obj oriented": "object oriented programming",
 
         "dbms": "database management system",
+
         "os": "operating system",
+
         "cn": "computer networks",
+
         "dsa": "data structures algorithms",
+
         "ai": "artificial intelligence",
+
         "ml": "machine learning",
+
         "rag": "retrieval augmented generation",
     }
 
@@ -110,9 +162,13 @@ def chunk_text(
         chunk = text[start:end]
 
         if chunk.strip():
-            chunks.append(chunk.strip())
+
+            chunks.append(
+                chunk.strip()
+            )
 
         if end >= len(text):
+
             break
 
         start = end - overlap
@@ -126,7 +182,9 @@ def chunk_text(
 
 def extract_pdf(pdf_path: str):
 
-    doc = pymupdf.open(pdf_path)
+    doc = pymupdf.open(
+        pdf_path
+    )
 
     pages = []
 
@@ -137,13 +195,18 @@ def extract_pdf(pdf_path: str):
 
         text = page.get_text()
 
-        text = clean_text(text)
+        text = clean_text(
+            text
+        )
 
         if text:
 
             pages.append({
+
                 "page": page_number,
+
                 "text": text
+
             })
 
     page_count = len(doc)
@@ -170,6 +233,7 @@ def index_pdf(
     )
 
     # Prevent duplicate indexing
+
     documents = [
         item
         for item in documents
@@ -185,10 +249,15 @@ def index_pdf(
         for chunk in chunks:
 
             documents.append({
+
                 "document_id": document_id,
+
                 "filename": filename,
+
                 "page": page_data["page"],
+
                 "text": chunk
+
             })
 
     rebuild_index()
@@ -203,24 +272,33 @@ def index_pdf(
 def rebuild_index():
 
     global vectorizer
+
     global tfidf_matrix
 
     if not documents:
 
         vectorizer = None
+
         tfidf_matrix = None
 
         return
 
     texts = [
+
         item["text"]
+
         for item in documents
+
     ]
 
     vectorizer = TfidfVectorizer(
+
         lowercase=True,
+
         stop_words="english",
+
         ngram_range=(1, 2)
+
     )
 
     tfidf_matrix = vectorizer.fit_transform(
@@ -232,14 +310,19 @@ def rebuild_index():
 # REMOVE PDF
 # =========================================================
 
-def remove_document(document_id: str):
+def remove_document(
+    document_id: str
+):
 
     global documents
 
     documents = [
+
         item
         for item in documents
+
         if item["document_id"] != document_id
+
     ]
 
     rebuild_index()
@@ -269,9 +352,11 @@ def search_documents(
 ):
 
     if not documents or vectorizer is None:
+
         return []
 
     # Normalize student query
+
     normalized_query = normalize_query(
         query
     )
@@ -287,29 +372,180 @@ def search_documents(
 
     results = []
 
-    for index, score in enumerate(similarities):
+    for index, score in enumerate(
+        similarities
+    ):
 
         item = documents[index]
 
         # Selected PDF filter
+
         if (
             selected_documents
             and item["document_id"]
             not in selected_documents
         ):
+
             continue
 
         results.append({
+
             **item,
+
             "score": float(score)
+
         })
 
     results.sort(
+
         key=lambda x: x["score"],
+
         reverse=True
+
     )
 
     return results[:top_k]
+
+
+# =========================================================
+# GEMINI
+# =========================================================
+
+def generate_gemini_answer(
+    question: str,
+    context: str,
+    language: str = "english",
+    outside_knowledge: bool = False
+):
+
+    if not gemini_client:
+
+        print(
+            "Gemini client is not available."
+        )
+
+        return None
+
+    # -----------------------------------------------------
+    # OUTSIDE PDF KNOWLEDGE
+    # -----------------------------------------------------
+
+    if outside_knowledge:
+
+        instruction = """
+You are an AI Study Assistant.
+
+The uploaded PDF does not contain relevant information
+for the student's question.
+
+Answer using your general knowledge.
+
+Give the actual answer.
+Do not say only "not found".
+Do not pretend the answer came from the PDF.
+Do not invent facts.
+Keep the explanation simple and student-friendly.
+"""
+
+    # -----------------------------------------------------
+    # ANSWER FROM PDF
+    # -----------------------------------------------------
+
+    else:
+
+        instruction = """
+You are an AI Study Assistant.
+
+Answer the student's question using ONLY the supplied
+PDF context.
+
+Do not invent information that is not supported by
+the PDF.
+
+If the PDF contains a definition, explain it clearly.
+
+If the PDF contains an example, use it when useful.
+
+Keep the answer simple and student-friendly.
+
+First give the direct answer.
+Then give a short explanation.
+"""
+
+    # -----------------------------------------------------
+    # LANGUAGE
+    # -----------------------------------------------------
+
+    if language.lower() == "hinglish":
+
+        instruction += """
+Answer in simple Hinglish.
+Use natural Hindi + English.
+Keep technical terms in English.
+"""
+
+    elif language.lower() == "hindi":
+
+        instruction += """
+Answer in simple Hindi.
+Keep standard technical terms in English when necessary.
+"""
+
+    else:
+
+        instruction += """
+Answer in clear, simple English.
+"""
+
+    # -----------------------------------------------------
+    # PROMPT
+    # -----------------------------------------------------
+
+    prompt = f"""
+{instruction}
+
+STUDENT QUESTION:
+
+{question}
+
+PDF CONTEXT:
+
+{context}
+
+Now answer the student's question.
+
+First give the direct answer.
+Then give a short explanation.
+"""
+
+    # -----------------------------------------------------
+    # GEMINI REQUEST
+    # -----------------------------------------------------
+
+    try:
+
+        response = gemini_client.models.generate_content(
+
+            model=GEMINI_MODEL,
+
+            contents=prompt
+
+        )
+
+        if response.text:
+
+            return response.text.strip()
+
+        return None
+
+    except Exception as e:
+
+        print(
+            "Gemini Error:",
+            e
+        )
+
+        return None
 
 
 # =========================================================
@@ -444,16 +680,27 @@ Then give a short explanation.
     try:
 
         response = requests.post(
+
             OLLAMA_URL,
+
             json={
+
                 "model": OLLAMA_MODEL,
+
                 "prompt": prompt,
+
                 "stream": False,
+
                 "options": {
+
                     "temperature": 0.2
+
                 }
+
             },
+
             timeout=120
+
         )
 
         response.raise_for_status()
@@ -466,13 +713,65 @@ Then give a short explanation.
         ).strip()
 
         if not answer:
+
             return None
 
         return answer
 
-    except requests.RequestException:
+    except requests.RequestException as e:
+
+        print(
+            "Ollama Error:",
+            e
+        )
 
         return None
+
+
+# =========================================================
+# COMMON AI FUNCTION
+# =========================================================
+
+def generate_answer(
+    question: str,
+    context: str,
+    language: str = "english",
+    outside_knowledge: bool = False
+):
+
+    # -----------------------------------------------------
+    # GEMINI
+    # -----------------------------------------------------
+
+    if AI_PROVIDER.lower() == "gemini":
+
+        return generate_gemini_answer(
+
+            question=question,
+
+            context=context,
+
+            language=language,
+
+            outside_knowledge=outside_knowledge
+
+        )
+
+    # -----------------------------------------------------
+    # OLLAMA
+    # -----------------------------------------------------
+
+    return generate_ollama_answer(
+
+        question=question,
+
+        context=context,
+
+        language=language,
+
+        outside_knowledge=outside_knowledge
+
+    )
 
 
 # =========================================================
@@ -492,9 +791,13 @@ def ask_question(
     # -----------------------------------------------------
 
     results = search_documents(
+
         query=question,
+
         top_k=top_k,
+
         selected_documents=selected_documents
+
     )
 
     # -----------------------------------------------------
@@ -503,11 +806,16 @@ def ask_question(
 
     if not results:
 
-        outside_answer = generate_ollama_answer(
+        outside_answer = generate_answer(
+
             question=question,
+
             context="",
+
             language=language,
+
             outside_knowledge=True
+
         )
 
         if outside_answer:
@@ -515,41 +823,60 @@ def ask_question(
             if language.lower() == "hinglish":
 
                 final_answer = (
+
                     "🌐 Outside PDF Knowledge:\n\n"
+
                     "Uploaded PDF me is question ka "
                     "relevant answer nahi mila.\n\n"
+
                     + outside_answer
+
                 )
 
             elif language.lower() == "hindi":
 
                 final_answer = (
+
                     "🌐 PDF ke bahar ki jaankari:\n\n"
+
                     "Uploaded PDF me is question ka "
                     "relevant answer nahi mila.\n\n"
+
                     + outside_answer
+
                 )
 
             else:
 
                 final_answer = (
+
                     "🌐 Outside PDF Knowledge:\n\n"
+
                     "The uploaded PDF does not contain "
                     "relevant information for this question.\n\n"
+
                     + outside_answer
+
                 )
 
             return {
+
                 "answer": final_answer,
+
                 "sources": []
+
             }
 
         return {
+
             "answer": (
+
                 "The answer was not found in the PDF, "
-                "and Ollama is currently unavailable."
+                "and the selected AI provider is unavailable."
             ),
+
             "sources": []
+
         }
 
     # -----------------------------------------------------
@@ -564,11 +891,16 @@ def ask_question(
 
     if best_score < PDF_RELEVANCE_THRESHOLD:
 
-        outside_answer = generate_ollama_answer(
+        outside_answer = generate_answer(
+
             question=question,
+
             context="",
+
             language=language,
+
             outside_knowledge=True
+
         )
 
         if outside_answer:
@@ -576,33 +908,48 @@ def ask_question(
             if language.lower() == "hinglish":
 
                 final_answer = (
+
                     "🌐 Outside PDF Knowledge:\n\n"
+
                     "Uploaded PDF me is question ka "
                     "relevant answer nahi mila.\n\n"
+
                     + outside_answer
+
                 )
 
             elif language.lower() == "hindi":
 
                 final_answer = (
+
                     "🌐 PDF ke bahar ki jaankari:\n\n"
+
                     "Uploaded PDF me is question ka "
                     "relevant answer nahi mila.\n\n"
+
                     + outside_answer
+
                 )
 
             else:
 
                 final_answer = (
+
                     "🌐 Outside PDF Knowledge:\n\n"
+
                     "The uploaded PDF does not contain "
                     "relevant information for this question.\n\n"
+
                     + outside_answer
+
                 )
 
             return {
+
                 "answer": final_answer,
+
                 "sources": []
+
             }
 
     # -----------------------------------------------------
@@ -614,9 +961,11 @@ def ask_question(
     for result in results:
 
         context_parts.append(
+
             f"[{result['filename']} - "
             f"Page {result['page']}]\n"
             f"{result['text']}"
+
         )
 
     context = "\n\n".join(
@@ -630,37 +979,53 @@ def ask_question(
     if mode == "pdf_only":
 
         answer = (
+
             "📚 Answer from PDF:\n\n"
+
             + context
+
         )
 
     # -----------------------------------------------------
-    # PDF + OLLAMA
+    # PDF + AI
     # -----------------------------------------------------
 
     else:
 
-        ollama_answer = generate_ollama_answer(
+        ai_answer = generate_answer(
+
             question=question,
+
             context=context,
+
             language=language,
+
             outside_knowledge=False
+
         )
 
-        if ollama_answer:
+        if ai_answer:
 
             answer = (
+
                 "📚 Answer from PDF:\n\n"
-                + ollama_answer
+
+                + ai_answer
+
             )
 
         else:
 
             answer = (
+
                 "📚 Relevant information found in PDF:\n\n"
+
                 + context
+
                 + "\n\n"
-                "⚠️ Ollama is currently unavailable."
+
+                "⚠️ AI provider is currently unavailable."
+
             )
 
     # -----------------------------------------------------
@@ -668,8 +1033,11 @@ def ask_question(
     # -----------------------------------------------------
 
     return {
+
         "answer": answer,
+
         "sources": results
+
     }
 
 
@@ -677,7 +1045,9 @@ def ask_question(
 # LOAD EXISTING PDFS
 # =========================================================
 
-def load_existing_pdfs(pdf_records):
+def load_existing_pdfs(
+    pdf_records
+):
 
     clear_index()
 
@@ -688,7 +1058,11 @@ def load_existing_pdfs(pdf_records):
         ):
 
             index_pdf(
+
                 record.file_path,
+
                 record.document_id,
+
                 record.filename
+
             )

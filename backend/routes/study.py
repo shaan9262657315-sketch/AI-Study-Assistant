@@ -6,7 +6,6 @@ from database import get_db
 from dependencies import get_current_user
 from models import Student, PDFDocument
 
-import requests
 import json
 import re
 import pymupdf
@@ -19,90 +18,11 @@ router = APIRouter(
 )
 
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2:3b"
-
-
 # =========================================================
-# OLLAMA
+# AI CONFIG
 # =========================================================
 
-def ask_ollama(prompt: str, json_mode: bool = False):
-
-    try:
-
-        payload = {
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.1,
-                "num_ctx": 8192,
-                "num_predict": 6000
-            }
-        }
-
-        # Force JSON response when required
-        if json_mode:
-            payload["format"] = {
-                "type": "object",
-                "properties": {
-                    "important_questions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "question": {
-                                    "type": "string"
-                                },
-                                "answer": {
-                                    "type": "string"
-                                }
-                            },
-                            "required": [
-                                "question",
-                                "answer"
-                            ]
-                        }
-                    }
-                },
-                "required": [
-                    "important_questions"
-                ]
-            }
-
-        response = requests.post(
-            OLLAMA_URL,
-            json=payload,
-            timeout=300
-        )
-
-        response.raise_for_status()
-
-        result = response.json()
-
-        return result.get("response", "").strip()
-
-    except requests.exceptions.ConnectionError:
-
-        raise HTTPException(
-            status_code=503,
-            detail="Ollama is not running."
-        )
-
-    except requests.exceptions.Timeout:
-
-        raise HTTPException(
-            status_code=504,
-            detail="Ollama request timed out."
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ollama error: {str(e)}"
-        )
+GEMINI_MODEL = "gemini-3.6-flash"
 
 
 # =========================================================
@@ -111,7 +31,13 @@ def ask_ollama(prompt: str, json_mode: bool = False):
 
 def language_instruction(language: str):
 
-    if language.lower() == "hinglish":
+    language = language.lower().strip()
+
+    # -----------------------------------------------------
+    # HINGLISH
+    # -----------------------------------------------------
+
+    if language == "hinglish":
 
         return """
 Write in natural Hinglish.
@@ -123,17 +49,64 @@ laws and important terminology in English.
 
 Do not translate technical terms unnecessarily.
 
-Example:
-"Force ek push ya pull hota hai jo kisi object ki
-motion ya state ko change kar sakta hai."
-
 Use simple Hindi words.
 
 Do not use very difficult Hindi.
+
+Example:
+"Force ek push ya pull hota hai jo kisi object ki
+motion ya state ko change kar sakta hai."
 """
 
+    # -----------------------------------------------------
+    # HINDI
+    # -----------------------------------------------------
+
+    if language == "hindi":
+
+        return """
+Write in simple Hindi.
+
+Keep standard technical and scientific terms in English
+where necessary.
+
+Use student-friendly language.
+"""
+
+    # -----------------------------------------------------
+    # GB ENGLISH
+    # -----------------------------------------------------
+
+    if language in [
+        "gb english",
+        "british english",
+        "english uk",
+        "uk english"
+    ]:
+
+        return """
+Write in clear British English (GB English).
+
+Use British spelling where applicable, for example:
+
+- organise
+- analyse
+- behaviour
+- centre
+- practise
+
+Use simple and student-friendly English.
+
+The explanation should be suitable for a student
+preparing for university examinations.
+"""
+
+    # -----------------------------------------------------
+    # DEFAULT ENGLISH
+    # -----------------------------------------------------
+
     return """
-Write in simple and clear English.
+Write in clear and simple English.
 
 Use student-friendly English.
 
@@ -147,10 +120,97 @@ preparing for exams.
 
 
 # =========================================================
+# GEMINI CALL
+# =========================================================
+
+def ask_gemini(
+    prompt: str,
+    json_mode: bool = False
+):
+
+    # -----------------------------------------------------
+    # CHECK GEMINI
+    # -----------------------------------------------------
+
+    if not rag.gemini_client:
+
+        raise HTTPException(
+            status_code=503,
+            detail="Gemini is not configured. Please check GEMINI_API_KEY."
+        )
+
+    try:
+
+        # -------------------------------------------------
+        # NORMAL TEXT
+        # -------------------------------------------------
+
+        if not json_mode:
+
+            response = rag.gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt
+            )
+
+        # -------------------------------------------------
+        # JSON RESPONSE
+        # -------------------------------------------------
+
+        else:
+
+            response = rag.gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json"
+                }
+            )
+
+        # -------------------------------------------------
+        # RESPONSE TEXT
+        # -------------------------------------------------
+
+        answer = getattr(
+            response,
+            "text",
+            None
+        )
+
+        if not answer:
+
+            raise HTTPException(
+                status_code=500,
+                detail="Gemini returned an empty response."
+            )
+
+        return answer.strip()
+
+    # -----------------------------------------------------
+    # GEMINI ERROR
+    # -----------------------------------------------------
+
+    except HTTPException:
+
+        raise
+
+    except Exception as e:
+
+        print("Gemini Study Guide Error:", e)
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Gemini request failed: {str(e)}"
+        )
+
+
+# =========================================================
 # LOAD PDF CONTENT
 # =========================================================
 
-def get_pdf_content(document_id: str, pdf: PDFDocument):
+def get_pdf_content(
+    document_id: str,
+    pdf: PDFDocument
+):
 
     # -----------------------------------------------------
     # FIRST: CHECK RAG DOCUMENTS
@@ -166,11 +226,17 @@ def get_pdf_content(document_id: str, pdf: PDFDocument):
 
     for item in pdf_documents:
 
-        text = item.get("text", "").strip()
+        text = item.get(
+            "text",
+            ""
+        ).strip()
 
         if text:
 
-            page = item.get("page", "Unknown")
+            page = item.get(
+                "page",
+                "Unknown"
+            )
 
             context_parts.append(
                 f"\n--- PAGE {page} ---\n{text}"
@@ -182,7 +248,9 @@ def get_pdf_content(document_id: str, pdf: PDFDocument):
 
     if context_parts:
 
-        return "\n".join(context_parts)
+        return "\n".join(
+            context_parts
+        )
 
     # -----------------------------------------------------
     # FALLBACK: DIRECT PDF READING
@@ -190,7 +258,9 @@ def get_pdf_content(document_id: str, pdf: PDFDocument):
 
     try:
 
-        pdf_file = pymupdf.open(pdf.file_path)
+        pdf_file = pymupdf.open(
+            pdf.file_path
+        )
 
         direct_parts = []
 
@@ -199,7 +269,9 @@ def get_pdf_content(document_id: str, pdf: PDFDocument):
             start=1
         ):
 
-            text = page.get_text("text").strip()
+            text = page.get_text(
+                "text"
+            ).strip()
 
             if text:
 
@@ -209,7 +281,9 @@ def get_pdf_content(document_id: str, pdf: PDFDocument):
 
         pdf_file.close()
 
-        context = "\n".join(direct_parts)
+        context = "\n".join(
+            direct_parts
+        )
 
         if context.strip():
 
@@ -237,13 +311,17 @@ def generate_summary(
     language: str
 ):
 
-    lang = language_instruction(language)
+    lang = language_instruction(
+        language
+    )
 
     prompt = f"""
-You are an expert teacher creating a study guide
-from an uploaded educational PDF.
+You are an expert university teacher creating
+a study guide from an uploaded educational PDF.
 
-STRICT SOURCE RULE:
+================================================
+STRICT SOURCE RULE
+================================================
 
 Use ONLY the PDF content provided below.
 
@@ -253,17 +331,21 @@ Do NOT invent information.
 
 Every explanation must be supported by the PDF.
 
+================================================
+LANGUAGE
+================================================
+
 {lang}
 
 ================================================
 TASK: CREATE STUDY SUMMARY
 ================================================
 
-Create a detailed study summary.
+Create a useful and well-organised study summary.
 
 Cover the important material present in the PDF.
 
-Include where supported:
+Include, whenever supported by the PDF:
 
 1. Introduction / overview
 2. Major topics
@@ -283,7 +365,11 @@ If formulas are present, write and explain them.
 
 If examples are present, explain their purpose.
 
-Do not add outside information.
+Do not add information that is not present
+in the PDF.
+
+The summary should help a student revise
+for university examinations.
 
 ================================================
 PDF CONTENT
@@ -301,10 +387,15 @@ Do not return JSON.
 
 Do not use code fences.
 
-Start directly with the summary.
+Do not write an introduction before the summary.
+
+Start directly with the study summary.
 """
 
-    return ask_ollama(prompt)
+    return ask_gemini(
+        prompt,
+        json_mode=False
+    )
 
 
 # =========================================================
@@ -314,11 +405,15 @@ Start directly with the summary.
 def extract_json(raw: str):
 
     if not raw:
+
         return None
 
     raw = raw.strip()
 
-    # Remove markdown code fences
+    # -----------------------------------------------------
+    # REMOVE CODE FENCES
+    # -----------------------------------------------------
+
     raw = re.sub(
         r"```json",
         "",
@@ -333,35 +428,136 @@ def extract_json(raw: str):
     ).strip()
 
     # -----------------------------------------------------
-    # FIRST TRY: DIRECT JSON
+    # DIRECT JSON
     # -----------------------------------------------------
 
     try:
 
-        return json.loads(raw)
+        return json.loads(
+            raw
+        )
 
     except json.JSONDecodeError:
+
         pass
 
     # -----------------------------------------------------
-    # SECOND TRY: FIND JSON OBJECT
+    # FIND JSON OBJECT
     # -----------------------------------------------------
 
-    start = raw.find("{")
-    end = raw.rfind("}")
+    start = raw.find(
+        "{"
+    )
 
-    if start != -1 and end != -1 and end > start:
+    end = raw.rfind(
+        "}"
+    )
 
-        json_text = raw[start:end + 1]
+    if (
+        start != -1
+        and end != -1
+        and end > start
+    ):
+
+        json_text = raw[
+            start:end + 1
+        ]
 
         try:
 
-            return json.loads(json_text)
+            return json.loads(
+                json_text
+            )
 
         except json.JSONDecodeError:
+
             pass
 
     return None
+
+
+# =========================================================
+# VALIDATE QUESTIONS
+# =========================================================
+
+def validate_questions(
+    data,
+    question_count
+):
+
+    if not isinstance(
+        data,
+        dict
+    ):
+
+        return None
+
+    questions = data.get(
+        "important_questions"
+    )
+
+    if not isinstance(
+        questions,
+        list
+    ):
+
+        return None
+
+    valid_questions = []
+
+    for item in questions:
+
+        if not isinstance(
+            item,
+            dict
+        ):
+
+            continue
+
+        question = item.get(
+            "question"
+        )
+
+        answer = item.get(
+            "answer"
+        )
+
+        if question is None:
+            continue
+
+        if answer is None:
+            continue
+
+        question = str(
+            question
+        ).strip()
+
+        answer = str(
+            answer
+        ).strip()
+
+        if not question:
+            continue
+
+        if not answer:
+            continue
+
+        valid_questions.append({
+            "question": question,
+            "answer": answer
+        })
+
+    # -----------------------------------------------------
+    # NEED EXACT NUMBER
+    # -----------------------------------------------------
+
+    if len(valid_questions) < question_count:
+
+        return None
+
+    return valid_questions[
+        :question_count
+    ]
 
 
 # =========================================================
@@ -374,14 +570,19 @@ def generate_questions(
     language: str
 ):
 
-    lang = language_instruction(language)
+    lang = language_instruction(
+        language
+    )
 
     prompt = f"""
-You are an expert exam question generator.
+You are an expert university exam question generator.
 
-Create important exam questions ONLY from the PDF.
+Create important examination questions ONLY from
+the supplied PDF content.
 
-STRICT SOURCE RULE:
+================================================
+STRICT SOURCE RULE
+================================================
 
 Use ONLY the PDF content.
 
@@ -389,19 +590,28 @@ Do NOT use outside knowledge.
 
 Do NOT invent facts.
 
+Every question and answer must be supported
+by the supplied PDF.
+
+================================================
+LANGUAGE
+================================================
+
 {lang}
 
 ================================================
 TASK
 ================================================
 
-Generate exactly {question_count} important questions.
+Generate EXACTLY {question_count}
+important questions.
 
-Questions should cover different important concepts.
+Questions should cover different important
+concepts from the PDF.
 
 Prefer:
 
-- Definitions
+- Important definitions
 - Important concepts
 - Laws
 - Principles
@@ -413,35 +623,25 @@ Prefer:
 
 Do NOT repeat the same concept.
 
-================================================
-ANSWER REQUIREMENTS
-================================================
+Each question MUST have a useful answer.
 
-Each question MUST have an answer.
+Answers should help a student prepare
+for university examinations.
 
-For conceptual questions:
-
-Give a clear and useful explanation.
-
-For factual questions:
-
-Give a concise but explanatory answer.
-
-Do not give one-word answers.
-
-Answers should help a student prepare for exams.
+Avoid one-word answers unless the PDF itself
+requires a specific technical term.
 
 ================================================
-VERY IMPORTANT JSON RULE
+JSON REQUIREMENT
 ================================================
 
-Return ONLY JSON.
+Return ONLY valid JSON.
 
-Do NOT write any introduction.
+Do NOT return markdown.
 
-Do NOT write any explanation outside JSON.
+Do NOT use code fences.
 
-Do NOT use markdown.
+Do NOT write anything before or after JSON.
 
 The JSON MUST have exactly this structure:
 
@@ -464,34 +664,41 @@ PDF CONTENT
 """
 
     # -----------------------------------------------------
-    # FIRST ATTEMPT
+    # FIRST GEMINI REQUEST
     # -----------------------------------------------------
 
-    raw = ask_ollama(
+    raw = ask_gemini(
         prompt,
         json_mode=True
     )
 
-    data = extract_json(raw)
+    data = extract_json(
+        raw
+    )
+
+    questions = validate_questions(
+        data,
+        question_count
+    )
 
     # -----------------------------------------------------
-    # RETRY IF JSON FAILED
+    # RETRY
     # -----------------------------------------------------
 
-    if data is None:
+    if questions is None:
 
         retry_prompt = f"""
-Return ONLY valid JSON.
+You must return ONLY valid JSON.
 
-Create exactly {question_count} important
-exam questions from the PDF below.
+Create exactly {question_count}
+important exam questions from the PDF.
 
-Each object MUST contain:
+Every object MUST contain:
 
 question
 answer
 
-Required format:
+Use this exact structure:
 
 {{
   "important_questions": [
@@ -502,89 +709,55 @@ Required format:
   ]
 }}
 
-No markdown.
-No code fences.
-No text outside JSON.
+Rules:
 
-Use ONLY the PDF content.
+- Exactly {question_count} objects
+- Every question must be different
+- Every answer must be non-empty
+- Use ONLY the PDF
+- Do NOT use outside knowledge
+- No markdown
+- No code fences
+- No text outside JSON
 
 {lang}
 
-PDF:
+================================================
+PDF
+================================================
 
 {context}
 """
 
-        raw = ask_ollama(
+        raw = ask_gemini(
             retry_prompt,
             json_mode=True
         )
 
-        data = extract_json(raw)
-
-    # -----------------------------------------------------
-    # FINAL JSON CHECK
-    # -----------------------------------------------------
-
-    if data is None:
-
-        raise HTTPException(
-            status_code=500,
-            detail="Ollama returned invalid question JSON."
+        data = extract_json(
+            raw
         )
 
-    questions = data.get("important_questions")
-
-    if not isinstance(questions, list):
-
-        raise HTTPException(
-            status_code=500,
-            detail="Invalid question format returned by Ollama."
+        questions = validate_questions(
+            data,
+            question_count
         )
 
     # -----------------------------------------------------
-    # VALIDATE QUESTIONS
+    # FINAL CHECK
     # -----------------------------------------------------
 
-    valid_questions = []
-
-    for item in questions:
-
-        if not isinstance(item, dict):
-            continue
-
-        question = item.get("question")
-        answer = item.get("answer")
-
-        if question is None or answer is None:
-            continue
-
-        question = str(question).strip()
-        answer = str(answer).strip()
-
-        if question and answer:
-
-            valid_questions.append({
-                "question": question,
-                "answer": answer
-            })
-
-    # -----------------------------------------------------
-    # CHECK MINIMUM
-    # -----------------------------------------------------
-
-    if not valid_questions:
+    if questions is None:
 
         raise HTTPException(
             status_code=500,
-            detail="No valid questions generated."
+            detail=(
+                "AI returned invalid study-guide "
+                "question JSON. Please try again."
+            )
         )
 
-    # -----------------------------------------------------
-    # RETURN REQUESTED NUMBER
-    # -----------------------------------------------------
-
-    return valid_questions[:question_count]
+    return questions
 
 
 # =========================================================
@@ -595,7 +768,9 @@ PDF:
 def generate_study_guide(
     data: StudyGuideRequest,
     db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user)
+    current_user: Student = Depends(
+        get_current_user
+    )
 ):
 
     # =====================================================
@@ -603,7 +778,9 @@ def generate_study_guide(
     # =====================================================
 
     document_id = data.document_id
+
     question_count = data.question_count
+
     language = data.language
 
     # =====================================================
@@ -611,18 +788,34 @@ def generate_study_guide(
     # =====================================================
 
     if question_count < 1:
+
         question_count = 1
 
     if question_count > 20:
+
         question_count = 20
 
     # =====================================================
     # VALIDATE LANGUAGE
     # =====================================================
 
-    language = language.lower().strip()
+    language = (
+        language
+        .lower()
+        .strip()
+    )
 
-    if language not in ["english", "hinglish"]:
+    allowed_languages = [
+        "english",
+        "gb english",
+        "british english",
+        "english uk",
+        "uk english",
+        "hinglish",
+        "hindi"
+    ]
+
+    if language not in allowed_languages:
 
         language = "english"
 
@@ -631,9 +824,12 @@ def generate_study_guide(
     # =====================================================
 
     pdf = (
-        db.query(PDFDocument)
+        db.query(
+            PDFDocument
+        )
         .filter(
-            PDFDocument.document_id == document_id
+            PDFDocument.document_id
+            == document_id
         )
         .first()
     )
@@ -665,11 +861,15 @@ def generate_study_guide(
     # LIMIT CONTEXT
     # =====================================================
 
-    # Prevent the small local model from getting
-    # overloaded with too much input.
-    if len(context) > 35000:
+    # Gemini can handle a much larger context than
+    # llama3.2:3b, but keeping a reasonable limit
+    # makes the request faster and focused.
 
-        context = context[:35000]
+    if len(context) > 50000:
+
+        context = context[
+            :50000
+        ]
 
     # =====================================================
     # STEP 1: SUMMARY
