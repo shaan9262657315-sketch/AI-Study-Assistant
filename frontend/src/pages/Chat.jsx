@@ -33,8 +33,8 @@ function Chat() {
       {/* Navbar */}
       <nav className="bg-indigo-600 text-white px-6 py-4 flex justify-between items-center">
         <h1 className="text-xl font-bold">
-          🤖 AI Study Assistant
-        </h1>
+  🤖 Shaan AI — Study Assistant
+</h1>
 
         <Link
           to="/"
@@ -53,8 +53,8 @@ function Chat() {
           </h2>
 
           <p className="text-xl text-gray-500 mt-4">
-            Ask anything and get an answer from Ollama AI.
-          </p>
+  Ask anything and get an answer from Shaan AI.
+</p>
         </div>
 
         {/* Question Box */}

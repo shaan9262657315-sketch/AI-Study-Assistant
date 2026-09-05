@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { getPDFLibrary, generateQuiz } from "../services/api";
 
 function Quiz() {
-
   // =====================================================
   // COMMON
   // =====================================================
@@ -24,13 +23,10 @@ function Quiz() {
   // =====================================================
 
   const [questions, setQuestions] = useState([]);
-
   const [selectedAnswers, setSelectedAnswers] = useState({});
-
   const [submitted, setSubmitted] = useState(false);
 
   const [loading, setLoading] = useState(false);
-
   const [error, setError] = useState("");
 
   // =====================================================
@@ -38,7 +34,6 @@ function Quiz() {
   // =====================================================
 
   const [timeLeft, setTimeLeft] = useState(0);
-
   const [quizStarted, setQuizStarted] = useState(false);
 
   // =====================================================
@@ -50,23 +45,19 @@ function Quiz() {
   }, []);
 
   const loadPDFs = async () => {
-
     try {
+      setError("");
 
       const data = await getPDFLibrary();
 
-      setPdfs(data);
+      setPdfs(data || []);
 
-      if (data.length > 0) {
+      if (data && data.length > 0) {
         setSelectedPDF(data[0].document_id);
       }
-
     } catch (err) {
-
       setError(err.message);
-
     }
-
   };
 
   // =====================================================
@@ -74,13 +65,11 @@ function Quiz() {
   // =====================================================
 
   const getQuestionCount = () => {
-
     if (questionCount === "custom") {
       return Number(customCount);
     }
 
     return Number(questionCount);
-
   };
 
   // =====================================================
@@ -88,34 +77,26 @@ function Quiz() {
   // =====================================================
 
   useEffect(() => {
-
     if (!quizStarted || submitted || timeLeft <= 0) {
       return;
     }
 
     const timer = setInterval(() => {
-
       setTimeLeft((prev) => {
-
         if (prev <= 1) {
-
           clearInterval(timer);
 
           setSubmitted(true);
           setQuizStarted(false);
 
           return 0;
-
         }
 
         return prev - 1;
-
       });
-
     }, 1000);
 
     return () => clearInterval(timer);
-
   }, [quizStarted, submitted, timeLeft]);
 
   // =====================================================
@@ -123,15 +104,12 @@ function Quiz() {
   // =====================================================
 
   const formatTime = (seconds) => {
-
     const minutes = Math.floor(seconds / 60);
-
     const remainingSeconds = seconds % 60;
 
     return `${String(minutes).padStart(2, "0")}:${String(
       remainingSeconds
     ).padStart(2, "0")}`;
-
   };
 
   // =====================================================
@@ -139,18 +117,14 @@ function Quiz() {
   // =====================================================
 
   const handleGenerate = async (e) => {
-
     e.preventDefault();
 
     setError("");
-
     setQuestions([]);
-
     setSelectedAnswers({});
-
     setSubmitted(false);
-
     setQuizStarted(false);
+    setTimeLeft(0);
 
     const count = getQuestionCount();
 
@@ -158,12 +132,8 @@ function Quiz() {
     // VALIDATE COUNT
     // ---------------------------------------------------
 
-    if (count < 1 || count > 20) {
-
-      setError(
-        "Question number must be between 1 and 20."
-      );
-
+    if (!Number.isInteger(count) || count < 1 || count > 20) {
+      setError("Question number must be between 1 and 20.");
       return;
     }
 
@@ -171,92 +141,65 @@ function Quiz() {
     // TOPIC MODE
     // ---------------------------------------------------
 
-    if (mode === "topic") {
-
-      if (!topic.trim()) {
-
-        setError(
-          "Please enter a topic."
-        );
-
-        return;
-      }
-
+    if (mode === "topic" && !topic.trim()) {
+      setError("Please enter a topic.");
+      return;
     }
 
     // ---------------------------------------------------
     // PDF MODE
     // ---------------------------------------------------
 
-    if (mode === "pdf") {
-
-      if (!selectedPDF) {
-
-        setError(
-          "Please select a PDF."
-        );
-
-        return;
-      }
-
+    if (mode === "pdf" && !selectedPDF) {
+      setError("Please select a PDF.");
+      return;
     }
 
     try {
-
       setLoading(true);
 
       const data = await generateQuiz({
-
         mode: mode,
 
-        document_id:
-          mode === "pdf"
-            ? selectedPDF
-            : null,
+        document_id: mode === "pdf" ? selectedPDF : null,
 
-        topic:
-          topic.trim() || null,
+        topic: topic.trim() || null,
 
         difficulty: difficulty,
 
         question_count: count,
-
       });
 
-      setQuestions(data.questions || []);
+      const generatedQuestions = data?.questions || [];
+
+      if (generatedQuestions.length === 0) {
+        setError("No questions were generated.");
+        return;
+      }
+
+      setQuestions(generatedQuestions);
 
       // -------------------------------------------------
       // TIMER
       // 2 MINUTES PER QUESTION
       // -------------------------------------------------
 
-      const totalTime = count * 120;
+      const totalTime = generatedQuestions.length * 120;
 
       setTimeLeft(totalTime);
-
       setQuizStarted(true);
-
     } catch (err) {
-
-      setError(err.message);
-
+      setError(err.message || "Failed to generate quiz.");
     } finally {
-
       setLoading(false);
-
     }
-
   };
 
   // =====================================================
   // SELECT ANSWER
   // =====================================================
 
-  const handleAnswer = (
-    questionIndex,
-    answer
-  ) => {
-
+  const handleAnswer = (questionIndex, answer) => {
     if (submitted) {
       return;
     }
@@ -265,7 +208,6 @@ function Quiz() {
       ...prev,
       [questionIndex]: answer,
     }));
-
   };
 
   // =====================================================
@@ -273,24 +215,18 @@ function Quiz() {
   // =====================================================
 
   const calculateScore = () => {
-
     let score = 0;
 
     questions.forEach((question, index) => {
-
       if (
         selectedAnswers[index] ===
         question.correct_answer
       ) {
-
         score++;
-
       }
-
     });
 
     return score;
-
   };
 
   // =====================================================
@@ -298,11 +234,8 @@ function Quiz() {
   // =====================================================
 
   const handleSubmit = () => {
-
     setSubmitted(true);
-
     setQuizStarted(false);
-
   };
 
   // =====================================================
@@ -310,19 +243,12 @@ function Quiz() {
   // =====================================================
 
   const resetQuiz = () => {
-
     setQuestions([]);
-
     setSelectedAnswers({});
-
     setSubmitted(false);
-
     setQuizStarted(false);
-
     setTimeLeft(0);
-
     setError("");
-
   };
 
   // =====================================================
@@ -330,7 +256,6 @@ function Quiz() {
   // =====================================================
 
   return (
-
     <div className="min-h-screen bg-gray-100">
 
       {/* =================================================
@@ -340,24 +265,25 @@ function Quiz() {
       <nav className="bg-indigo-600 text-white px-6 py-4 flex justify-between items-center">
 
         <h1 className="text-xl font-bold">
-          📝 AI Study Assistant
+          📝 Shaan AI Study Assistant
         </h1>
 
         <Link
           to="/"
-          className="bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold"
+          className="bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-gray-100 transition"
         >
           Dashboard
         </Link>
 
       </nav>
 
-
       {/* =================================================
           MAIN
       ================================================= */}
 
       <main className="max-w-5xl mx-auto px-6 py-8">
+
+        {/* PAGE HEADER */}
 
         <div className="mb-8">
 
@@ -366,11 +292,10 @@ function Quiz() {
           </h2>
 
           <p className="text-gray-500 mt-2">
-            Test your knowledge with AI generated quizzes.
+            Test your knowledge with Shaan AI generated quizzes.
           </p>
 
         </div>
-
 
         {/* =================================================
             QUIZ SETTINGS
@@ -383,6 +308,8 @@ function Quiz() {
             {/* MODE BUTTONS */}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-7">
+
+              {/* TOPIC MODE */}
 
               <button
                 type="button"
@@ -398,16 +325,17 @@ function Quiz() {
               >
 
                 <h3 className="text-xl font-bold text-gray-800">
-                  🤖 AI Topic Quiz
+                  🤖 Shaan AI Topic Quiz
                 </h3>
 
                 <p className="text-gray-500 mt-2">
-                  Enter any topic and Ollama will generate
-                  a quiz using its general knowledge.
+                  Enter any topic and Shaan AI will generate
+                  a quiz using AI knowledge.
                 </p>
 
               </button>
 
+              {/* PDF MODE */}
 
               <button
                 type="button"
@@ -427,13 +355,13 @@ function Quiz() {
                 </h3>
 
                 <p className="text-gray-500 mt-2">
-                  Generate questions only from your uploaded PDF.
+                  Generate questions from your uploaded PDF
+                  using Shaan AI.
                 </p>
 
               </button>
 
             </div>
-
 
             <form onSubmit={handleGenerate}>
 
@@ -484,7 +412,6 @@ function Quiz() {
 
               )}
 
-
               {/* =================================================
                   TOPIC
               ================================================= */}
@@ -508,7 +435,7 @@ function Quiz() {
                   placeholder={
                     mode === "topic"
                       ? "Example: Java OOP"
-                      : "Example: Newton's Laws"
+                      : "Example: String Class"
                   }
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
                 />
@@ -517,13 +444,12 @@ function Quiz() {
 
                   <p className="text-sm text-gray-500 mt-2">
                     Leave empty to generate questions from
-                    important concepts in the PDF.
+                    important concepts in the selected PDF.
                   </p>
 
                 )}
 
               </div>
-
 
               {/* =================================================
                   DIFFICULTY
@@ -558,7 +484,6 @@ function Quiz() {
                 </select>
 
               </div>
-
 
               {/* =================================================
                   QUESTION COUNT
@@ -602,7 +527,6 @@ function Quiz() {
 
               </div>
 
-
               {/* =================================================
                   CUSTOM COUNT
               ================================================= */}
@@ -630,7 +554,6 @@ function Quiz() {
 
               )}
 
-
               {/* =================================================
                   ERROR
               ================================================= */}
@@ -644,7 +567,6 @@ function Quiz() {
                 </div>
 
               )}
-
 
               {/* =================================================
                   GENERATE BUTTON
@@ -660,7 +582,7 @@ function Quiz() {
               >
 
                 {loading
-                  ? "🤖 Generating Quiz..."
+                  ? "🤖 Shaan AI is generating..."
                   : "✨ Generate Quiz"}
 
               </button>
@@ -670,7 +592,6 @@ function Quiz() {
           </div>
 
         )}
-
 
         {/* =================================================
             QUIZ HEADER + TIMER
@@ -685,9 +606,11 @@ function Quiz() {
               <div>
 
                 <h3 className="text-xl font-bold text-gray-800">
+
                   {mode === "topic"
-                    ? "🤖 AI Topic Quiz"
+                    ? "🤖 Shaan AI Topic Quiz"
                     : "📚 My PDF Quiz"}
+
                 </h3>
 
                 <p className="text-gray-500 mt-1">
@@ -695,7 +618,6 @@ function Quiz() {
                 </p>
 
               </div>
-
 
               {/* TIMER */}
 
@@ -717,7 +639,6 @@ function Quiz() {
 
             </div>
 
-
             {/* =================================================
                 QUESTIONS
             ================================================= */}
@@ -735,6 +656,7 @@ function Quiz() {
                     {index + 1}. {question.question}
                   </h3>
 
+                  {/* OPTIONS */}
 
                   <div className="mt-5 space-y-3">
 
@@ -779,8 +701,6 @@ function Quiz() {
                               }`}
                           >
 
-                            {/* TICK / RADIO */}
-
                             <span
                               className={`w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 font-bold
                                 ${
@@ -800,7 +720,6 @@ function Quiz() {
 
                             </span>
 
-
                             <span>
                               {option}
                             </span>
@@ -808,12 +727,10 @@ function Quiz() {
                           </button>
 
                         );
-
                       }
                     )}
 
                   </div>
-
 
                   {/* =================================================
                       EXPLANATION
@@ -844,9 +761,8 @@ function Quiz() {
 
               ))}
 
-
               {/* =================================================
-                  SUBMIT
+                  SUBMIT / RESULT
               ================================================= */}
 
               {!submitted ? (
@@ -890,7 +806,6 @@ function Quiz() {
 
                   </p>
 
-
                   <button
                     onClick={resetQuiz}
                     className="mt-6 bg-indigo-600 hover:bg-indigo-700 text-white px-7 py-3 rounded-xl font-semibold"
@@ -913,9 +828,7 @@ function Quiz() {
       </main>
 
     </div>
-
   );
-
 }
 
 export default Quiz;

@@ -17,3 +17,6 @@ node_modules/
 **/.venv/
 .venv/
 
+
+# Uploaded PDF files
+backend/pdfs/

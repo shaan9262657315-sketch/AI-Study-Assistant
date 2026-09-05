@@ -1,18 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from sqlalchemy.orm import Session
 
 import json
-import requests
 import re
+from typing import Optional
 
 import rag
 
 from database import get_db
 from dependencies import get_current_user
 from models import Student, PDFDocument
-from rag import search_documents
+
+from schemas import (
+    QuizGenerateRequest,
+    QuizResponse,
+    QuizQuestion
+)
 
 
 router = APIRouter(
@@ -25,509 +29,19 @@ router = APIRouter(
 # CONFIG
 # =========================================================
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2:3b"
+GEMINI_MODEL = "gemini-3.8-flash"
 
-GEMINI_MODEL = "gemini-3.6-flash"
+MAX_QUESTION_COUNT = 20
+DEFAULT_QUESTION_COUNT = 5
 
-
-# =========================================================
-# REQUEST MODEL
-# =========================================================
-
-class QuizGenerateRequest(BaseModel):
-
-    mode: str = "topic"
-
-    document_id: Optional[str] = None
-
-    topic: Optional[str] = None
-
-    chapter: Optional[str] = None
-
-    difficulty: str = "medium"
-
-    question_count: int = 5
+MAX_CONTEXT_LENGTH = 30000
 
 
 # =========================================================
-# JSON EXTRACTION
+# GEMINI
 # =========================================================
 
-def extract_json(text: str):
-
-    if not text:
-        return None
-
-    text = text.strip()
-
-    # -----------------------------------------------------
-    # Direct JSON
-    # -----------------------------------------------------
-
-    try:
-
-        return json.loads(text)
-
-    except json.JSONDecodeError:
-
-        pass
-
-    # -----------------------------------------------------
-    # Remove markdown code fences
-    # -----------------------------------------------------
-
-    text = re.sub(
-        r"```json\s*",
-        "",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    text = re.sub(
-        r"```\s*",
-        "",
-        text
-    ).strip()
-
-    # -----------------------------------------------------
-    # Try again
-    # -----------------------------------------------------
-
-    try:
-
-        return json.loads(text)
-
-    except json.JSONDecodeError:
-
-        pass
-
-    # -----------------------------------------------------
-    # Find JSON object
-    # -----------------------------------------------------
-
-    start = text.find("{")
-
-    end = text.rfind("}")
-
-    if start != -1 and end != -1 and end > start:
-
-        json_text = text[start:end + 1]
-
-        try:
-
-            return json.loads(json_text)
-
-        except json.JSONDecodeError:
-
-            pass
-
-    # -----------------------------------------------------
-    # Find JSON array
-    # -----------------------------------------------------
-
-    start = text.find("[")
-
-    end = text.rfind("]")
-
-    if start != -1 and end != -1 and end > start:
-
-        json_text = text[start:end + 1]
-
-        try:
-
-            return json.loads(json_text)
-
-        except json.JSONDecodeError:
-
-            pass
-
-    return None
-
-
-# =========================================================
-# VALIDATE QUESTIONS
-# =========================================================
-
-def validate_questions(data, expected_count):
-
-    # -----------------------------------------------------
-    # Accept dictionary format
-    # -----------------------------------------------------
-
-    if isinstance(data, dict):
-
-        data = data.get("questions")
-
-    if not isinstance(data, list):
-
-        return None
-
-    valid_questions = []
-
-    for item in data:
-
-        if not isinstance(item, dict):
-
-            continue
-
-        question = item.get("question")
-
-        options = item.get("options")
-
-        correct_answer = item.get("correct_answer")
-
-        explanation = item.get("explanation")
-
-        # -------------------------------------------------
-        # Question
-        # -------------------------------------------------
-
-        if not question:
-
-            continue
-
-        question = str(question).strip()
-
-        if not question:
-
-            continue
-
-        # -------------------------------------------------
-        # Options
-        # -------------------------------------------------
-
-        if not isinstance(options, list):
-
-            continue
-
-        if len(options) != 4:
-
-            continue
-
-        cleaned_options = []
-
-        for option in options:
-
-            if option is None:
-
-                continue
-
-            option = str(option).strip()
-
-            if option:
-
-                cleaned_options.append(option)
-
-        if len(cleaned_options) != 4:
-
-            continue
-
-        # -------------------------------------------------
-        # Options must be different
-        # -------------------------------------------------
-
-        if len(set(cleaned_options)) != 4:
-
-            continue
-
-        # -------------------------------------------------
-        # Correct answer
-        # -------------------------------------------------
-
-        if correct_answer is None:
-
-            continue
-
-        correct_answer = str(
-            correct_answer
-        ).strip()
-
-        # -------------------------------------------------
-        # Sometimes AI returns A/B/C/D
-        # -------------------------------------------------
-
-        if correct_answer.upper() in ["A", "B", "C", "D"]:
-
-            index = ord(
-                correct_answer.upper()
-            ) - ord("A")
-
-            correct_answer = cleaned_options[index]
-
-        # -------------------------------------------------
-        # Correct answer must exist
-        # -------------------------------------------------
-
-        if correct_answer not in cleaned_options:
-
-            continue
-
-        # -------------------------------------------------
-        # Explanation
-        # -------------------------------------------------
-
-        if not explanation:
-
-            explanation = (
-                "Explanation not provided."
-            )
-
-        explanation = str(
-            explanation
-        ).strip()
-
-        valid_questions.append({
-
-            "question": question,
-
-            "options": cleaned_options,
-
-            "correct_answer": correct_answer,
-
-            "explanation": explanation
-
-        })
-
-    # -----------------------------------------------------
-    # Need requested count
-    # -----------------------------------------------------
-
-    if len(valid_questions) < expected_count:
-
-        return None
-
-    return valid_questions[:expected_count]
-
-
-# =========================================================
-# DIFFICULTY
-# =========================================================
-
-def get_difficulty_instruction(
-    difficulty: str
-):
-
-    difficulty = difficulty.lower().strip()
-
-    # -----------------------------------------------------
-    # EASY
-    # -----------------------------------------------------
-
-    if difficulty == "easy":
-
-        return """
-DIFFICULTY: EASY
-
-Create beginner-friendly questions.
-
-Focus on:
-- Basic definitions
-- Direct facts
-- Simple concept recognition
-- Basic understanding
-- Simple examples
-
-Avoid:
-- Complex reasoning
-- Multi-step reasoning
-- Tricky questions
-- Multiple concepts in one question
-
-Questions should be easy for a student
-who has read the PDF once.
-"""
-
-    # -----------------------------------------------------
-    # HARD
-    # -----------------------------------------------------
-
-    if difficulty == "hard":
-
-        return """
-DIFFICULTY: HARD
-
-Create challenging exam-level questions.
-
-Focus on:
-- Deep conceptual understanding
-- Application
-- Comparison
-- Relationships between concepts
-- Multi-step reasoning
-- Conceptual analysis
-
-Avoid:
-- Simple definition-only questions
-
-Do not create questions outside the PDF.
-Every question must still be answerable
-from the supplied PDF context.
-"""
-
-    # -----------------------------------------------------
-    # MEDIUM
-    # -----------------------------------------------------
-
-    return """
-DIFFICULTY: MEDIUM
-
-Create moderate exam-level questions.
-
-Focus on:
-- Conceptual understanding
-- Simple application
-- Comparing concepts
-- Understanding why something happens
-- Important formulas
-- Moderate reasoning
-
-Avoid questions that are only
-simple definition memorization.
-
-Questions should test understanding.
-"""
-
-
-# =========================================================
-# OLLAMA CALL
-# =========================================================
-
-def call_ollama(
-    prompt: str,
-    difficulty: str = "medium"
-):
-
-    difficulty = difficulty.lower().strip()
-
-    if difficulty == "easy":
-
-        temperature = 0.2
-
-    elif difficulty == "hard":
-
-        temperature = 0.5
-
-    else:
-
-        temperature = 0.3
-
-    try:
-
-        response = requests.post(
-
-            OLLAMA_URL,
-
-            json={
-
-                "model": OLLAMA_MODEL,
-
-                "prompt": prompt,
-
-                "stream": False,
-
-                "format": "json",
-
-                "options": {
-
-                    "temperature": temperature,
-
-                    "num_ctx": 8192,
-
-                    "num_predict": 5000
-
-                }
-
-            },
-
-            timeout=300
-
-        )
-
-        response.raise_for_status()
-
-        result = response.json()
-
-        answer = result.get(
-            "response",
-            ""
-        )
-
-        if not answer:
-
-            raise HTTPException(
-
-                status_code=500,
-
-                detail=(
-                    "Ollama returned an empty response."
-                )
-
-            )
-
-        return answer
-
-    except requests.exceptions.ConnectionError:
-
-        raise HTTPException(
-
-            status_code=503,
-
-            detail="Ollama is not running."
-
-        )
-
-    except requests.exceptions.Timeout:
-
-        raise HTTPException(
-
-            status_code=504,
-
-            detail=(
-                "Ollama took too long to generate the quiz."
-            )
-
-        )
-
-    except requests.exceptions.RequestException as e:
-
-        raise HTTPException(
-
-            status_code=500,
-
-            detail=(
-                f"Ollama request failed: {str(e)}"
-            )
-
-        )
-
-    except HTTPException:
-
-        raise
-
-    except Exception as e:
-
-        raise HTTPException(
-
-            status_code=500,
-
-            detail=f"Ollama error: {str(e)}"
-
-        )
-
-
-# =========================================================
-# GEMINI CALL
-# =========================================================
-
-def call_gemini(
-    prompt: str,
-    difficulty: str = "medium"
-):
-
-    # -----------------------------------------------------
-    # Check Gemini client
-    # -----------------------------------------------------
+def call_gemini(prompt: str):
 
     if not getattr(
         rag,
@@ -536,37 +50,31 @@ def call_gemini(
     ):
 
         raise HTTPException(
-
             status_code=503,
-
             detail=(
                 "Gemini is not configured. "
-                "Check GEMINI_API_KEY."
+                "Please check GEMINI_API_KEY."
             )
-
         )
 
     try:
 
-        response = rag.gemini_client.models.generate_content(
+        response = (
+            rag.gemini_client
+            .models
+            .generate_content(
 
-            model=GEMINI_MODEL,
+                model=GEMINI_MODEL,
 
-            contents=prompt,
+                contents=prompt,
 
-            config={
+                config={
+                    "response_mime_type":
+                        "application/json"
+                }
 
-                "temperature": 0.2,
-
-                "response_mime_type": "application/json"
-
-            }
-
+            )
         )
-
-        # -------------------------------------------------
-        # Gemini response text
-        # -------------------------------------------------
 
         answer = getattr(
             response,
@@ -577,13 +85,8 @@ def call_gemini(
         if not answer:
 
             raise HTTPException(
-
                 status_code=500,
-
-                detail=(
-                    "Gemini returned an empty response."
-                )
-
+                detail="Gemini returned an empty response."
             )
 
         return answer.strip()
@@ -596,61 +99,252 @@ def call_gemini(
 
         print(
             "Gemini Quiz Error:",
-            repr(e)
+            e
         )
 
         raise HTTPException(
-
             status_code=500,
+            detail=f"Gemini request failed: {str(e)}"
+        )
 
-            detail=(
-                "Gemini failed to generate the quiz. "
-                f"{str(e)}"
+
+# =========================================================
+# EXTRACT JSON
+# =========================================================
+
+def extract_json(text: str):
+
+    if not text:
+
+        return None
+
+    text = text.strip()
+
+    # -----------------------------------------------------
+    # DIRECT JSON
+    # -----------------------------------------------------
+
+    try:
+
+        return json.loads(
+            text
+        )
+
+    except json.JSONDecodeError:
+
+        pass
+
+    # -----------------------------------------------------
+    # REMOVE CODE FENCE
+    # -----------------------------------------------------
+
+    cleaned = re.sub(
+        r"```json",
+        "",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    cleaned = re.sub(
+        r"```",
+        "",
+        cleaned
+    ).strip()
+
+    try:
+
+        return json.loads(
+            cleaned
+        )
+
+    except json.JSONDecodeError:
+
+        pass
+
+    # -----------------------------------------------------
+    # FIND JSON OBJECT
+    # -----------------------------------------------------
+
+    start = cleaned.find(
+        "{"
+    )
+
+    end = cleaned.rfind(
+        "}"
+    )
+
+    if (
+        start != -1
+        and end != -1
+        and end > start
+    ):
+
+        json_text = cleaned[
+            start:end + 1
+        ]
+
+        try:
+
+            return json.loads(
+                json_text
             )
 
-        )
+        except json.JSONDecodeError:
+
+            pass
+
+    return None
 
 
 # =========================================================
-# AI CALL
+# VALIDATE QUIZ
 # =========================================================
 
-def call_ai(
-    prompt: str,
-    difficulty: str = "medium"
+def validate_quiz(
+    data,
+    expected_count: int
 ):
 
-    provider = getattr(
-        rag,
-        "AI_PROVIDER",
-        "ollama"
+    if not isinstance(
+        data,
+        dict
+    ):
+
+        return None
+
+    questions = data.get(
+        "questions"
     )
 
-    provider = provider.lower().strip()
+    if not isinstance(
+        questions,
+        list
+    ):
 
-    print(
-        f"Quiz AI Provider: {provider}"
-    )
+        return None
 
-    # -----------------------------------------------------
-    # GEMINI
-    # -----------------------------------------------------
+    valid_questions = []
 
-    if provider == "gemini":
+    for item in questions:
 
-        return call_gemini(
-            prompt,
-            difficulty
+        if not isinstance(
+            item,
+            dict
+        ):
+
+            continue
+
+        question = item.get(
+            "question"
         )
 
+        options = item.get(
+            "options"
+        )
+
+        correct_answer = item.get(
+            "correct_answer"
+        )
+
+        explanation = item.get(
+            "explanation"
+        )
+
+        # -------------------------------------------------
+        # BASIC VALIDATION
+        # -------------------------------------------------
+
+        if not question:
+            continue
+
+        if not options:
+            continue
+
+        if not correct_answer:
+            continue
+
+        if not explanation:
+            continue
+
+        # -------------------------------------------------
+        # OPTIONS VALIDATION
+        # -------------------------------------------------
+
+        if not isinstance(
+            options,
+            list
+        ):
+
+            continue
+
+        if len(options) != 4:
+
+            continue
+
+        cleaned_options = []
+
+        for option in options:
+
+            if option is None:
+                continue
+
+            option = str(
+                option
+            ).strip()
+
+            if option:
+
+                cleaned_options.append(
+                    option
+                )
+
+        if len(cleaned_options) != 4:
+
+            continue
+
+        # -------------------------------------------------
+        # CORRECT ANSWER MUST EXIST
+        # -------------------------------------------------
+
+        correct_answer = str(
+            correct_answer
+        ).strip()
+
+        if correct_answer not in cleaned_options:
+
+            continue
+
+        # -------------------------------------------------
+        # ADD VALID QUESTION
+        # -------------------------------------------------
+
+        valid_questions.append({
+
+            "question":
+                str(question).strip(),
+
+            "options":
+                cleaned_options,
+
+            "correct_answer":
+                correct_answer,
+
+            "explanation":
+                str(explanation).strip()
+
+        })
+
     # -----------------------------------------------------
-    # OLLAMA
+    # EXACT COUNT CHECK
     # -----------------------------------------------------
 
-    return call_ollama(
-        prompt,
-        difficulty
-    )
+    if len(valid_questions) < expected_count:
+
+        return None
+
+    return valid_questions[
+        :expected_count
+    ]
 
 
 # =========================================================
@@ -658,21 +352,15 @@ def call_ai(
 # =========================================================
 
 def generate_topic_quiz(
-    topic,
-    difficulty,
-    question_count
+    topic: str,
+    difficulty: str,
+    question_count: int
 ):
 
-    difficulty_instruction = (
-        get_difficulty_instruction(
-            difficulty
-        )
-    )
-
     prompt = f"""
-You are an AI Study Assistant.
+You are an expert AI Study Assistant.
 
-Create a multiple-choice quiz.
+Create a multiple-choice educational quiz.
 
 TOPIC:
 {topic}
@@ -683,126 +371,199 @@ DIFFICULTY:
 NUMBER OF QUESTIONS:
 {question_count}
 
-{difficulty_instruction}
-
 ================================================
-IMPORTANT RULES
+REQUIREMENTS
 ================================================
 
-1. Generate exactly {question_count} questions.
+Generate exactly {question_count} questions.
 
-2. Every question must have exactly 4 options.
+Each question must have:
 
-3. There must be exactly ONE correct answer.
+1. One clear question.
+2. Exactly four options.
+3. Exactly one correct answer.
+4. A short explanation.
 
-4. correct_answer must exactly match
-one of the four options.
+The four options must be plausible.
 
-5. Do not repeat questions.
+Do not create duplicate questions.
 
-6. Do not test the same concept repeatedly.
+Questions should test understanding, not just
+memorisation whenever possible.
 
-7. Questions must genuinely match
-the requested difficulty.
-
-8. This is a Topic Quiz.
-
-9. General knowledge may be used.
-
-10. Keep explanations short and useful.
-
-11. Do not create unsafe or inappropriate
-questions.
+Difficulty should match:
+{difficulty}
 
 ================================================
-OUTPUT FORMAT
+JSON FORMAT
 ================================================
 
 Return ONLY valid JSON.
 
-Do NOT use markdown.
+Do not use markdown.
 
-Do NOT use code fences.
+Do not use code fences.
 
-Do NOT write anything before JSON.
-
-Do NOT write anything after JSON.
+Do not write anything outside JSON.
 
 Use exactly this structure:
 
 {{
-  "questions": [
-    {{
-      "question": "Question text",
-      "options": [
-        "Option A",
-        "Option B",
-        "Option C",
-        "Option D"
-      ],
-      "correct_answer": "Exactly one option text",
-      "explanation": "Short explanation"
-    }}
-  ]
+    "questions": [
+        {{
+            "question": "Question text",
+            "options": [
+                "Option 1",
+                "Option 2",
+                "Option 3",
+                "Option 4"
+            ],
+            "correct_answer": "Correct option",
+            "explanation": "Short explanation"
+        }}
+    ]
 }}
+
+The correct_answer value MUST exactly match
+one of the four option strings.
+
+Generate exactly {question_count} questions.
 """
 
-    raw = call_ai(
-        prompt,
-        difficulty
+    raw = call_gemini(
+        prompt
     )
 
     data = extract_json(
         raw
     )
 
-    questions = validate_questions(
+    questions = validate_quiz(
         data,
         question_count
     )
 
+    # -----------------------------------------------------
+    # RETRY
+    # -----------------------------------------------------
+
     if questions is None:
 
-        print(
-            "Invalid Topic Quiz JSON:"
+        retry_prompt = f"""
+Return ONLY valid JSON.
+
+Create exactly {question_count}
+multiple-choice questions about:
+
+{topic}
+
+Difficulty:
+{difficulty}
+
+Every question MUST contain:
+
+- question
+- exactly 4 options
+- correct_answer
+- explanation
+
+The correct_answer MUST exactly match
+one of the four options.
+
+No markdown.
+No code fences.
+No extra text.
+
+Use exactly:
+
+{{
+    "questions": [
+        {{
+            "question": "Question",
+            "options": [
+                "Option 1",
+                "Option 2",
+                "Option 3",
+                "Option 4"
+            ],
+            "correct_answer": "Option 1",
+            "explanation": "Explanation"
+        }}
+    ]
+}}
+
+Generate exactly {question_count} questions.
+"""
+
+        raw = call_gemini(
+            retry_prompt
         )
 
-        print(raw)
+        data = extract_json(
+            raw
+        )
+
+        questions = validate_quiz(
+            data,
+            question_count
+        )
+
+    if questions is None:
 
         raise HTTPException(
-
             status_code=500,
-
             detail=(
-                "AI returned invalid quiz JSON. "
+                "Gemini returned invalid quiz data. "
                 "Please try again."
             )
-
         )
 
     return questions
 
 
 # =========================================================
-# GET PDF CONTEXT
+# PDF CONTEXT
 # =========================================================
 
-def get_pdf_quiz_context(
-    document_id,
-    topic
+def get_pdf_context(
+    document_id: str,
+    topic: Optional[str] = None,
+    chapter: Optional[str] = None
 ):
 
     # -----------------------------------------------------
-    # Topic provided
+    # BUILD SEARCH QUERY
     # -----------------------------------------------------
+
+    search_parts = []
 
     if topic and topic.strip():
 
-        results = search_documents(
+        search_parts.append(
+            topic.strip()
+        )
 
-            query=topic.strip(),
+    if chapter and chapter.strip():
 
-            top_k=8,
+        search_parts.append(
+            chapter.strip()
+        )
+
+    # -----------------------------------------------------
+    # SEARCH RAG
+    # -----------------------------------------------------
+
+    if search_parts:
+
+        search_query = " ".join(
+            search_parts
+        )
+
+        results = rag.search_documents(
+
+            query=search_query,
+
+            top_k=10,
 
             selected_documents=[
                 document_id
@@ -810,49 +571,42 @@ def get_pdf_quiz_context(
 
         )
 
-    # -----------------------------------------------------
-    # No topic
-    # -----------------------------------------------------
-
     else:
 
         results = [
 
-            doc
+            item
 
-            for doc in rag.documents
+            for item in rag.documents
 
-            if doc.get(
+            if item.get(
                 "document_id"
             ) == document_id
 
         ]
 
-        # -------------------------------------------------
-        # Limit chunks
-        # -------------------------------------------------
-
-        results = results[:8]
+        results = results[:10]
 
     # -----------------------------------------------------
-    # No results
+    # NO RESULTS
     # -----------------------------------------------------
 
     if not results:
 
-        raise HTTPException(
+        return None
 
-            status_code=404,
-
-            detail=(
-                "No content found in the selected PDF."
-            )
-
-        )
+    # -----------------------------------------------------
+    # BUILD CONTEXT
+    # -----------------------------------------------------
 
     context_parts = []
 
     for result in results:
+
+        page = result.get(
+            "page",
+            "Unknown"
+        )
 
         text = result.get(
             "text",
@@ -860,47 +614,32 @@ def get_pdf_quiz_context(
         ).strip()
 
         if not text:
-
             continue
-
-        page = result.get(
-            "page",
-            "Unknown"
-        )
 
         context_parts.append(
 
-            f"Page {page}:\n{text}"
+            f"[Page {page}]\n"
+            f"{text}"
 
         )
+
+    if not context_parts:
+
+        return None
 
     context = "\n\n".join(
         context_parts
     )
 
     # -----------------------------------------------------
-    # No readable content
+    # LIMIT CONTEXT
     # -----------------------------------------------------
 
-    if not context.strip():
+    if len(context) > MAX_CONTEXT_LENGTH:
 
-        raise HTTPException(
-
-            status_code=404,
-
-            detail=(
-                "No readable content found in the selected PDF."
-            )
-
-        )
-
-    # -----------------------------------------------------
-    # Context limit
-    # -----------------------------------------------------
-
-    if len(context) > 24000:
-
-        context = context[:24000]
+        context = context[
+            :MAX_CONTEXT_LENGTH
+        ]
 
     return context
 
@@ -910,147 +649,136 @@ def get_pdf_quiz_context(
 # =========================================================
 
 def generate_pdf_quiz(
-    document_id,
-    topic,
-    difficulty,
-    question_count
+    context: str,
+    topic: Optional[str],
+    chapter: Optional[str],
+    difficulty: str,
+    question_count: int
 ):
 
-    context = get_pdf_quiz_context(
+    topic_text = (
 
-        document_id,
+        topic.strip()
 
-        topic
+        if topic
+        and topic.strip()
+
+        else
+        "all important concepts"
 
     )
 
-    difficulty_instruction = (
-        get_difficulty_instruction(
-            difficulty
-        )
+    chapter_text = (
+
+        chapter.strip()
+
+        if chapter
+        and chapter.strip()
+
+        else
+        "all available chapters"
+
     )
-
-    if topic and topic.strip():
-
-        topic_instruction = topic.strip()
-
-    else:
-
-        topic_instruction = (
-            "important concepts covered in the PDF"
-        )
 
     prompt = f"""
-You are an AI Study Assistant.
+You are an expert university-level AI Study Assistant.
 
-Create a multiple-choice quiz using ONLY
-the PDF content provided below.
+Create a multiple-choice quiz using ONLY the supplied
+PDF content.
 
 ================================================
-QUIZ INFORMATION
+QUIZ DETAILS
 ================================================
 
-Quiz Topic:
-{topic_instruction}
+Topic:
+{topic_text}
+
+Chapter:
+{chapter_text}
 
 Difficulty:
 {difficulty}
 
-Number of Questions:
+Number of questions:
 {question_count}
 
-{difficulty_instruction}
-
 ================================================
-STRICT PDF SOURCE RULE
+STRICT SOURCE RULE
 ================================================
 
-VERY IMPORTANT:
-
-Use ONLY the information contained
-in the supplied PDF context.
+Use ONLY the information contained in the PDF.
 
 Do NOT use outside knowledge.
 
-Do NOT use information from your
-pre-trained knowledge.
-
 Do NOT invent facts.
 
-Do NOT assume information that is
-not present in the PDF.
+Every question, option, correct answer and explanation
+must be supported by the supplied PDF.
 
-Every question must be answerable
-from the supplied PDF context.
-
-Every correct answer must be supported
-by the supplied PDF context.
-
-Every explanation must be supported
-by the supplied PDF context.
+If a requested topic is not sufficiently covered
+by the PDF, create questions only from the relevant
+information that actually exists.
 
 ================================================
-QUESTION RULES
+QUESTION REQUIREMENTS
 ================================================
 
-1. Generate exactly {question_count} questions.
+Generate exactly {question_count} questions.
 
-2. Every question must have exactly 4 options.
+Each question must contain:
 
-3. There must be exactly ONE correct answer.
+1. One clear question.
+2. Exactly four options.
+3. Exactly one correct answer.
+4. A useful explanation.
 
-4. correct_answer must exactly match
-one of the four options.
+Questions should cover different concepts.
 
-5. Do not repeat questions.
+Avoid duplicate questions.
 
-6. Do not repeatedly test the same concept.
+Prefer important concepts, definitions, principles,
+formulas, examples and exam-relevant material
+when supported by the PDF.
 
-7. Questions must match the requested difficulty.
-
-8. Keep questions relevant to:
-{topic_instruction}
-
-9. Do not create questions about information
-not contained in the PDF.
-
-10. Keep explanations concise.
-
-11. If the PDF does not provide enough
-information for a question, do not create
-that question.
+Difficulty:
+{difficulty}
 
 ================================================
-OUTPUT FORMAT
+JSON REQUIREMENT
 ================================================
 
 Return ONLY valid JSON.
 
-No markdown.
+Do not use markdown.
 
-No code fences.
+Do not use code fences.
 
-No text before JSON.
-
-No text after JSON.
+Do not write anything outside JSON.
 
 Use exactly this structure:
 
 {{
-  "questions": [
-    {{
-      "question": "Question text",
-      "options": [
-        "Option A",
-        "Option B",
-        "Option C",
-        "Option D"
-      ],
-      "correct_answer": "Exactly one option text",
-      "explanation": "Explanation based only on PDF"
-    }}
-  ]
+    "questions": [
+        {{
+            "question": "Question text",
+            "options": [
+                "Option 1",
+                "Option 2",
+                "Option 3",
+                "Option 4"
+            ],
+            "correct_answer": "Correct option",
+            "explanation": "Explanation based only on PDF"
+        }}
+    ]
 }}
+
+IMPORTANT:
+
+The correct_answer value MUST exactly match
+one of the four option strings.
+
+Generate exactly {question_count} questions.
 
 ================================================
 PDF CONTENT
@@ -1059,43 +787,100 @@ PDF CONTENT
 {context}
 """
 
-    raw = call_ai(
-
-        prompt,
-
-        difficulty
-
+    raw = call_gemini(
+        prompt
     )
 
     data = extract_json(
         raw
     )
 
-    questions = validate_questions(
-
+    questions = validate_quiz(
         data,
-
         question_count
-
     )
+
+    # -----------------------------------------------------
+    # RETRY
+    # -----------------------------------------------------
 
     if questions is None:
 
-        print(
-            "Invalid PDF Quiz JSON:"
+        retry_prompt = f"""
+Return ONLY valid JSON.
+
+Create exactly {question_count}
+multiple-choice questions from the supplied PDF.
+
+Use ONLY the PDF.
+
+Do NOT use outside knowledge.
+
+Difficulty:
+{difficulty}
+
+Every question MUST contain:
+
+- question
+- exactly 4 options
+- correct_answer
+- explanation
+
+The correct_answer MUST exactly match
+one of the four options.
+
+No markdown.
+No code fences.
+No text outside JSON.
+
+Use exactly:
+
+{{
+    "questions": [
+        {{
+            "question": "Question",
+            "options": [
+                "Option 1",
+                "Option 2",
+                "Option 3",
+                "Option 4"
+            ],
+            "correct_answer": "Correct option",
+            "explanation": "PDF-based explanation"
+        }}
+    ]
+}}
+
+Generate exactly {question_count} questions.
+
+================================================
+PDF
+================================================
+
+{context}
+"""
+
+        raw = call_gemini(
+            retry_prompt
         )
 
-        print(raw)
+        data = extract_json(
+            raw
+        )
+
+        questions = validate_quiz(
+            data,
+            question_count
+        )
+
+    if questions is None:
 
         raise HTTPException(
-
             status_code=500,
-
             detail=(
-                "AI returned invalid PDF quiz JSON. "
+                "Gemini returned invalid PDF quiz data. "
                 "Please try again."
             )
-
         )
 
     return questions
@@ -1105,12 +890,17 @@ PDF CONTENT
 # API
 # =========================================================
 
-@router.post("/generate")
+@router.post(
+    "/generate",
+    response_model=QuizResponse
+)
 def generate_quiz(
 
     data: QuizGenerateRequest,
 
-    db: Session = Depends(get_db),
+    db: Session = Depends(
+        get_db
+    ),
 
     current_user: Student = Depends(
         get_current_user
@@ -1122,51 +912,15 @@ def generate_quiz(
     # QUESTION COUNT
     # =====================================================
 
-    if data.question_count < 1:
+    question_count = data.question_count
 
-        raise HTTPException(
+    if question_count < 1:
 
-            status_code=400,
+        question_count = 1
 
-            detail=(
-                "Question count must be at least 1."
-            )
+    if question_count > MAX_QUESTION_COUNT:
 
-        )
-
-    if data.question_count > 20:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail=(
-                "Question count cannot exceed 20."
-            )
-
-        )
-
-    # =====================================================
-    # DIFFICULTY
-    # =====================================================
-
-    difficulty = (
-        data.difficulty
-        .lower()
-        .strip()
-    )
-
-    if difficulty not in [
-
-        "easy",
-
-        "medium",
-
-        "hard"
-
-    ]:
-
-        difficulty = "medium"
+        question_count = MAX_QUESTION_COUNT
 
     # =====================================================
     # MODE
@@ -1179,67 +933,70 @@ def generate_quiz(
     )
 
     # =====================================================
-    # TOPIC QUIZ
+    # DIFFICULTY
+    # =====================================================
+
+    difficulty = (
+        data.difficulty
+        .lower()
+        .strip()
+    )
+
+    allowed_difficulties = [
+        "easy",
+        "medium",
+        "hard"
+    ]
+
+    if difficulty not in allowed_difficulties:
+
+        difficulty = "medium"
+
+    # =====================================================
+    # TOPIC MODE
     # =====================================================
 
     if mode == "topic":
 
-        if not data.topic or not data.topic.strip():
+        if (
+            not data.topic
+            or not data.topic.strip()
+        ):
 
             raise HTTPException(
-
                 status_code=400,
-
-                detail=(
-                    "Please enter a topic."
-                )
-
+                detail="Please enter a topic."
             )
 
         questions = generate_topic_quiz(
 
-            topic=data.topic.strip(),
+            topic=data.topic,
 
             difficulty=difficulty,
 
-            question_count=data.question_count
+            question_count=question_count
 
         )
 
         return {
-
-            "questions": questions,
-
-            "difficulty": difficulty,
-
-            "provider": getattr(
-                rag,
-                "AI_PROVIDER",
-                "ollama"
-            )
-
+            "questions": questions
         }
 
     # =====================================================
-    # PDF QUIZ
+    # PDF MODE
     # =====================================================
 
-    elif mode == "pdf":
+    if mode == "pdf":
 
         if not data.document_id:
 
             raise HTTPException(
-
                 status_code=400,
-
-                detail=(
-                    "Please select a PDF."
-                )
-
+                detail="Please select a PDF."
             )
 
         # -------------------------------------------------
-        # Check PDF exists
+        # CHECK PDF IN DATABASE
         # -------------------------------------------------
 
         document = (
@@ -1249,10 +1006,8 @@ def generate_quiz(
             )
 
             .filter(
-
                 PDFDocument.document_id
                 == data.document_id
-
             )
 
             .first()
@@ -1262,53 +1017,64 @@ def generate_quiz(
         if not document:
 
             raise HTTPException(
-
                 status_code=404,
-
                 detail="PDF not found."
-
             )
 
         # -------------------------------------------------
-        # Generate PDF quiz
+        # GET RAG CONTEXT
         # -------------------------------------------------
 
-        questions = generate_pdf_quiz(
+        context = get_pdf_context(
 
             document_id=data.document_id,
 
             topic=data.topic,
 
+            chapter=data.chapter
+
+        )
+
+        if not context:
+
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No relevant content found "
+                    "in the selected PDF."
+                )
+            )
+
+        # -------------------------------------------------
+        # GENERATE QUIZ
+        # -------------------------------------------------
+
+        questions = generate_pdf_quiz(
+
+            context=context,
+
+            topic=data.topic,
+
+            chapter=data.chapter,
+
             difficulty=difficulty,
 
-            question_count=data.question_count
+            question_count=question_count
 
         )
 
         return {
-
-            "questions": questions,
-
-            "difficulty": difficulty,
-
-            "provider": getattr(
-                rag,
-                "AI_PROVIDER",
-                "ollama"
-            )
-
+            "questions": questions
         }
 
     # =====================================================
     # INVALID MODE
     # =====================================================
 
-    else:
-
-        raise HTTPException(
-
-            status_code=400,
-
-            detail="Invalid quiz mode."
-
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Invalid quiz mode. "
+            "Use 'topic' or 'pdf'."
         )
+    )

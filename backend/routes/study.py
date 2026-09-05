@@ -22,8 +22,7 @@ router = APIRouter(
 # AI CONFIG
 # =========================================================
 
-GEMINI_MODEL = "gemini-3.6-flash"
-
+GEMINI_MODEL = "gemini-3.8-flash"
 
 # =========================================================
 # LANGUAGE
@@ -201,8 +200,92 @@ def ask_gemini(
             status_code=500,
             detail=f"Gemini request failed: {str(e)}"
         )
+import time
 
+def ask_gemini(
+    prompt: str,
+    json_mode: bool = False
+):
 
+    if not rag.gemini_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Gemini is not configured. Please check GEMINI_API_KEY."
+        )
+
+    max_retries = 3
+    delays = [2, 5, 10]
+
+    for attempt in range(max_retries):
+
+        try:
+
+            config = None
+
+            if json_mode:
+                config = {
+                    "response_mime_type": "application/json"
+                }
+
+            response = rag.gemini_client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=prompt,
+                config=config
+            )
+
+            answer = getattr(
+                response,
+                "text",
+                None
+            )
+
+            if not answer:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Gemini returned an empty response."
+                )
+
+            return answer.strip()
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+
+            error_text = str(e)
+
+            print(
+                f"Gemini attempt {attempt + 1}/{max_retries} failed:",
+                error_text
+            )
+
+            # Retry only temporary 503 errors
+            if (
+                "503" in error_text
+                or "UNAVAILABLE" in error_text
+            ):
+
+                if attempt < max_retries - 1:
+
+                    print(
+                        f"Retrying Gemini in {delays[attempt]} seconds..."
+                    )
+
+                    time.sleep(
+                        delays[attempt]
+                    )
+
+                    continue
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Gemini request failed: {error_text}"
+            )
+
+    raise HTTPException(
+        status_code=503,
+        detail="Gemini is temporarily unavailable. Please try again later."
+    )
 # =========================================================
 # LOAD PDF CONTENT
 # =========================================================
@@ -861,9 +944,8 @@ def generate_study_guide(
     # LIMIT CONTEXT
     # =====================================================
 
-    # Gemini can handle a much larger context than
-    # llama3.2:3b, but keeping a reasonable limit
-    # makes the request faster and focused.
+    # Keep a reasonable context limit
+    # to make the request faster and focused.
 
     if len(context) > 50000:
 

@@ -2,8 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import json
-import requests
-
+import time
 import rag
 from dependencies import get_current_user
 from models import Student, PDFDocument
@@ -25,6 +24,7 @@ class FlashcardGenerateRequest(BaseModel):
 
 
 def extract_json(text: str):
+
     text = text.strip()
 
     try:
@@ -33,10 +33,15 @@ def extract_json(text: str):
         pass
 
     if "```json" in text:
+
         try:
             text = text.split("```json", 1)[1]
             text = text.split("```", 1)[0]
-            return json.loads(text.strip())
+
+            return json.loads(
+                text.strip()
+            )
+
         except:
             pass
 
@@ -44,20 +49,31 @@ def extract_json(text: str):
     end = text.rfind("}")
 
     if start != -1 and end != -1:
+
         try:
-            return json.loads(text[start:end + 1])
+            return json.loads(
+                text[start:end + 1]
+            )
+
         except:
             pass
 
     return None
 
 
-def validate_flashcards(data, expected_count):
+def validate_flashcards(
+    data,
+    expected_count
+):
 
     if isinstance(data, dict):
-        data = data.get("flashcards")
+
+        data = data.get(
+            "flashcards"
+        )
 
     if not isinstance(data, list):
+
         return None
 
     valid_cards = []
@@ -65,77 +81,125 @@ def validate_flashcards(data, expected_count):
     for item in data:
 
         if not isinstance(item, dict):
+
             continue
 
-        question = item.get("question")
-        answer = item.get("answer")
+        question = item.get(
+            "question"
+        )
+
+        answer = item.get(
+            "answer"
+        )
 
         if not question or not answer:
+
             continue
 
         valid_cards.append({
-            "question": str(question).strip(),
-            "answer": str(answer).strip()
+
+            "question":
+                str(question).strip(),
+
+            "answer":
+                str(answer).strip()
+
         })
 
     if len(valid_cards) < expected_count:
+
         return None
 
     return valid_cards[:expected_count]
 
 
-def call_ollama(prompt):
+# =========================================================
+# GEMINI
+# =========================================================
+import time
 
-    try:
+def call_gemini(prompt):
 
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-
-            json={
-                "model": "llama3.2:3b",
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-
-                "options": {
-                    "temperature": 0.3,
-                    "num_ctx": 4096,
-                    "num_predict": 3000
-                }
-            },
-
-            timeout=300
-        )
-
-        response.raise_for_status()
-
-        result = response.json()
-
-        return result.get("response", "")
-
-    except requests.exceptions.ConnectionError:
+    if not getattr(rag, "gemini_client", None):
 
         raise HTTPException(
             status_code=503,
-            detail="Ollama is not running."
+            detail="Gemini is not configured. Check GEMINI_API_KEY."
         )
 
-    except requests.exceptions.Timeout:
+    max_retries = 3
+    delays = [2, 5, 10]
 
-        raise HTTPException(
-            status_code=504,
-            detail="Ollama took too long to respond."
-        )
+    for attempt in range(max_retries):
 
-    except Exception as e:
+        try:
 
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ollama error: {str(e)}"
-        )
+            response = (
+                rag.gemini_client
+                .models
+                .generate_content(
+                    model="gemini-3.8-flash",
+                    contents=prompt,
+                    config={
+                        "response_mime_type": "application/json"
+                    }
+                )
+            )
 
+            answer = getattr(
+                response,
+                "text",
+                None
+            )
 
-def generate_topic_flashcards(topic, question_count):
+            if not answer:
+
+                raise HTTPException(
+                    status_code=500,
+                    detail="Gemini returned an empty response."
+                )
+
+            return answer
+
+        except HTTPException:
+            raise
+
+        except Exception as e:
+
+            error_text = str(e)
+
+            print(
+                f"Gemini Flashcard attempt "
+                f"{attempt + 1}/{max_retries} failed:",
+                error_text
+            )
+
+            if (
+                "503" in error_text
+                or "UNAVAILABLE" in error_text
+            ):
+
+                if attempt < max_retries - 1:
+
+                    time.sleep(
+                        delays[attempt]
+                    )
+
+                    continue
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Gemini error: {error_text}"
+            )
+
+# =========================================================
+# TOPIC FLASHCARDS
+# =========================================================
+
+def generate_topic_flashcards(
+    topic,
+    question_count
+):
 
     prompt = f"""
 You are an AI Study Assistant.
@@ -169,9 +233,13 @@ Rules:
 8. Avoid duplicate questions.
 """
 
-    raw = call_ollama(prompt)
+    raw = call_gemini(
+        prompt
+    )
 
-    data = extract_json(raw)
+    data = extract_json(
+        raw
+    )
 
     cards = validate_flashcards(
         data,
@@ -181,29 +249,54 @@ Rules:
     if cards is None:
 
         raise HTTPException(
+
             status_code=500,
-            detail="Ollama returned invalid flashcard JSON. Please try again."
+
+            detail=(
+                "Gemini returned invalid "
+                "flashcard JSON. Please try again."
+            )
+
         )
 
     return cards
 
 
-def generate_pdf_flashcards(document_id, topic, question_count):
+# =========================================================
+# PDF FLASHCARDS
+# =========================================================
+
+def generate_pdf_flashcards(
+    document_id,
+    topic,
+    question_count
+):
 
     if topic and topic.strip():
 
         results = rag.search_documents(
+
             query=topic.strip(),
+
             top_k=8,
-            selected_documents=[document_id]
+
+            selected_documents=[
+                document_id
+            ]
+
         )
 
     else:
 
         results = [
+
             doc
+
             for doc in rag.documents
-            if doc["document_id"] == document_id
+
+            if doc["document_id"]
+            == document_id
+
         ]
 
         results = results[:8]
@@ -211,8 +304,14 @@ def generate_pdf_flashcards(document_id, topic, question_count):
     if not results:
 
         raise HTTPException(
+
             status_code=404,
-            detail="No content found in the selected PDF."
+
+            detail=(
+                "No content found in "
+                "the selected PDF."
+            )
+
         )
 
     context_parts = []
@@ -220,18 +319,30 @@ def generate_pdf_flashcards(document_id, topic, question_count):
     for result in results:
 
         context_parts.append(
-            f"Page {result['page']}:\n{result['text']}"
+
+            f"Page {result['page']}:\n"
+            f"{result['text']}"
+
         )
 
-    context = "\n\n".join(context_parts)
+    context = "\n\n".join(
+        context_parts
+    )
 
     if len(context) > 16000:
+
         context = context[:16000]
 
     topic_instruction = (
+
         topic.strip()
-        if topic and topic.strip()
-        else "important concepts from this PDF"
+
+        if topic
+        and topic.strip()
+
+        else
+        "important concepts from this PDF"
+
     )
 
     prompt = f"""
@@ -277,9 +388,13 @@ PDF CONTENT:
 {context}
 """
 
-    raw = call_ollama(prompt)
+    raw = call_gemini(
+        prompt
+    )
 
-    data = extract_json(raw)
+    data = extract_json(
+        raw
+    )
 
     cards = validate_flashcards(
         data,
@@ -289,82 +404,164 @@ PDF CONTENT:
     if cards is None:
 
         raise HTTPException(
+
             status_code=500,
-            detail="Ollama returned invalid PDF flashcard JSON. Please try again."
+
+            detail=(
+                "Gemini returned invalid "
+                "PDF flashcard JSON. Please try again."
+            )
+
         )
 
     return cards
 
 
+# =========================================================
+# API
+# =========================================================
+
 @router.post("/generate")
 def generate_flashcards(
+
     data: FlashcardGenerateRequest,
+
     db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user)
+
+    current_user: Student = Depends(
+        get_current_user
+    )
+
 ):
 
-    if data.question_count < 1 or data.question_count > 20:
+    if (
+        data.question_count < 1
+        or data.question_count > 20
+    ):
 
         raise HTTPException(
+
             status_code=400,
-            detail="Question count must be between 1 and 20."
+
+            detail=(
+                "Question count must be "
+                "between 1 and 20."
+            )
+
         )
 
-    if data.mode == "topic":
+    mode = (
+        data.mode
+        .lower()
+        .strip()
+    )
 
-        if not data.topic or not data.topic.strip():
+    # -----------------------------------------------------
+    # TOPIC
+    # -----------------------------------------------------
+
+    if mode == "topic":
+
+        if (
+            not data.topic
+            or not data.topic.strip()
+        ):
 
             raise HTTPException(
+
                 status_code=400,
+
                 detail="Please enter a topic."
+
             )
 
         cards = generate_topic_flashcards(
+
             data.topic,
+
             data.question_count
+
         )
 
         return {
-            "flashcards": cards
+
+            "flashcards": cards,
+
+            "provider": "gemini"
+
         }
 
-    elif data.mode == "pdf":
+    # -----------------------------------------------------
+    # PDF
+    # -----------------------------------------------------
+
+    elif mode == "pdf":
 
         if not data.document_id:
 
             raise HTTPException(
+
                 status_code=400,
+
                 detail="Please select a PDF."
+
             )
 
         document = (
-            db.query(PDFDocument)
-            .filter(
-                PDFDocument.document_id == data.document_id
+
+            db.query(
+                PDFDocument
             )
+
+            .filter(
+
+                PDFDocument.document_id
+                == data.document_id
+
+            )
+
             .first()
+
         )
 
         if not document:
 
             raise HTTPException(
+
                 status_code=404,
+
                 detail="PDF not found."
+
             )
 
         cards = generate_pdf_flashcards(
+
             data.document_id,
+
             data.topic,
+
             data.question_count
+
         )
 
         return {
-            "flashcards": cards
+
+            "flashcards": cards,
+
+            "provider": "gemini"
+
         }
 
     else:
 
         raise HTTPException(
+
             status_code=400,
+
             detail="Invalid flashcard mode."
+
         )
+
+
+
+

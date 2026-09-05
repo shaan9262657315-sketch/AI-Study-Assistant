@@ -20,9 +20,8 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Local  -> ollama
-# Production -> gemini
-AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama")
+# Gemini is the only AI provider
+AI_PROVIDER = "gemini"
 
 
 # =========================================================
@@ -44,11 +43,7 @@ if GEMINI_API_KEY:
 
 PDF_FOLDER = "pdfs"
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-
-OLLAMA_MODEL = "llama3.2:3b"
-
-GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
 
 # Agar best similarity isse kam hai,
 # to PDF ko relevant nahi maana jayega.
@@ -549,186 +544,6 @@ Then give a short explanation.
 
 
 # =========================================================
-# OLLAMA
-# =========================================================
-
-def generate_ollama_answer(
-    question: str,
-    context: str,
-    language: str = "english",
-    outside_knowledge: bool = False
-):
-
-    # -----------------------------------------------------
-    # OUTSIDE PDF KNOWLEDGE
-    # -----------------------------------------------------
-
-    if outside_knowledge:
-
-        system_instruction = """
-You are an AI Study Assistant.
-
-The uploaded PDF does not contain relevant information
-for the student's question.
-
-Therefore, answer the question using your general knowledge.
-
-IMPORTANT:
-- Give the actual answer.
-- Do not say only "not found".
-- Do not pretend the answer came from the PDF.
-- Never invent facts.
-- Never guess technical terms.
-- Use standard meanings of technical concepts.
-- If the question asks for a full form, give the standard full form.
-- Keep the answer simple and student-friendly.
-"""
-
-    # -----------------------------------------------------
-    # ANSWER FROM PDF
-    # -----------------------------------------------------
-
-    else:
-
-        system_instruction = """
-You are an AI Study Assistant.
-
-Answer the student's question using ONLY the supplied
-PDF context.
-
-IMPORTANT:
-- The PDF context is relevant to the student's question.
-- Do not ignore the supplied context.
-- Do not replace the PDF information with unrelated information.
-- Do not invent facts that are not supported by the PDF.
-- If the PDF contains a definition, explain that definition clearly.
-- If the PDF contains an example, use it when useful.
-- Keep the answer simple and student-friendly.
-- Answer the actual question, not a different question.
-"""
-
-    # -----------------------------------------------------
-    # LANGUAGE
-    # -----------------------------------------------------
-
-    if language.lower() == "hinglish":
-
-        system_instruction += """
-Answer in simple Hinglish.
-Use natural Hindi + English.
-Keep technical terms in English.
-"""
-
-    elif language.lower() == "hindi":
-
-        system_instruction += """
-Answer in simple Hindi.
-Keep standard technical terms in English when necessary.
-"""
-
-    else:
-
-        system_instruction += """
-Answer in clear, simple English.
-"""
-
-    # -----------------------------------------------------
-    # PROMPT
-    # -----------------------------------------------------
-
-    prompt = f"""
-{system_instruction}
-
-STUDENT QUESTION:
-{question}
-"""
-
-    if context:
-
-        prompt += f"""
-
-SUPPLIED PDF CONTEXT:
-{context}
-"""
-
-    if outside_knowledge:
-
-        prompt += """
-
-The PDF context is not relevant enough for this question.
-
-Now answer the student's question using your general knowledge.
-
-First give the direct answer.
-Then give a short explanation.
-"""
-
-    else:
-
-        prompt += """
-
-Now answer the student's question using the supplied PDF context.
-
-First give the direct answer.
-Then give a short explanation.
-"""
-
-    # -----------------------------------------------------
-    # OLLAMA REQUEST
-    # -----------------------------------------------------
-
-    try:
-
-        response = requests.post(
-
-            OLLAMA_URL,
-
-            json={
-
-                "model": OLLAMA_MODEL,
-
-                "prompt": prompt,
-
-                "stream": False,
-
-                "options": {
-
-                    "temperature": 0.2
-
-                }
-
-            },
-
-            timeout=120
-
-        )
-
-        response.raise_for_status()
-
-        data = response.json()
-
-        answer = data.get(
-            "response",
-            ""
-        ).strip()
-
-        if not answer:
-
-            return None
-
-        return answer
-
-    except requests.RequestException as e:
-
-        print(
-            "Ollama Error:",
-            e
-        )
-
-        return None
-
-
-# =========================================================
 # COMMON AI FUNCTION
 # =========================================================
 
@@ -739,83 +554,46 @@ def generate_answer(
     outside_knowledge: bool = False
 ):
 
-    # -----------------------------------------------------
-    # GEMINI
-    # -----------------------------------------------------
-
-    if AI_PROVIDER.lower() == "gemini":
-
-        return generate_gemini_answer(
-
-            question=question,
-
-            context=context,
-
-            language=language,
-
-            outside_knowledge=outside_knowledge
-
-        )
-
-    # -----------------------------------------------------
-    # OLLAMA
-    # -----------------------------------------------------
-
-    return generate_ollama_answer(
-
+    return generate_gemini_answer(
         question=question,
-
         context=context,
-
         language=language,
-
         outside_knowledge=outside_knowledge
-
     )
 
 
 # =========================================================
 # ASK QUESTION
 # =========================================================
-
 def ask_question(
     question: str,
-    mode: str = "pdf_ollama",
+    mode: str = "pdf_gemini",
     language: str = "english",
     selected_documents: Optional[List[str]] = None,
     top_k: int = 5
 ):
 
-    # -----------------------------------------------------
+    # =====================================================
     # SEARCH PDF
-    # -----------------------------------------------------
+    # =====================================================
 
     results = search_documents(
-
         query=question,
-
         top_k=top_k,
-
         selected_documents=selected_documents
-
     )
 
-    # -----------------------------------------------------
-    # NO RESULTS
-    # -----------------------------------------------------
+    # =====================================================
+    # NO PDF CONTENT
+    # =====================================================
 
     if not results:
 
         outside_answer = generate_answer(
-
             question=question,
-
             context="",
-
             language=language,
-
             outside_knowledge=True
-
         )
 
         if outside_answer:
@@ -823,221 +601,109 @@ def ask_question(
             if language.lower() == "hinglish":
 
                 final_answer = (
-
                     "🌐 Outside PDF Knowledge:\n\n"
-
                     "Uploaded PDF me is question ka "
-                    "relevant answer nahi mila.\n\n"
-
+                    "relevant content nahi mila.\n\n"
                     + outside_answer
-
                 )
 
             elif language.lower() == "hindi":
 
                 final_answer = (
-
                     "🌐 PDF ke bahar ki jaankari:\n\n"
-
                     "Uploaded PDF me is question ka "
-                    "relevant answer nahi mila.\n\n"
-
+                    "relevant content nahi mila.\n\n"
                     + outside_answer
-
                 )
 
             else:
 
                 final_answer = (
-
                     "🌐 Outside PDF Knowledge:\n\n"
-
                     "The uploaded PDF does not contain "
                     "relevant information for this question.\n\n"
-
                     + outside_answer
-
                 )
 
             return {
-
                 "answer": final_answer,
-
                 "sources": []
-
             }
 
         return {
-
-            "answer": (
-
-                "The answer was not found in the PDF, "
-                "and the selected AI provider is unavailable."
-            ),
-
+            "answer": "Gemini is currently unavailable.",
             "sources": []
-
         }
 
-    # -----------------------------------------------------
-    # BEST SCORE
-    # -----------------------------------------------------
-
-    best_score = results[0]["score"]
-
-    # -----------------------------------------------------
-    # PDF NOT RELEVANT
-    # -----------------------------------------------------
-
-    if best_score < PDF_RELEVANCE_THRESHOLD:
-
-        outside_answer = generate_answer(
-
-            question=question,
-
-            context="",
-
-            language=language,
-
-            outside_knowledge=True
-
-        )
-
-        if outside_answer:
-
-            if language.lower() == "hinglish":
-
-                final_answer = (
-
-                    "🌐 Outside PDF Knowledge:\n\n"
-
-                    "Uploaded PDF me is question ka "
-                    "relevant answer nahi mila.\n\n"
-
-                    + outside_answer
-
-                )
-
-            elif language.lower() == "hindi":
-
-                final_answer = (
-
-                    "🌐 PDF ke bahar ki jaankari:\n\n"
-
-                    "Uploaded PDF me is question ka "
-                    "relevant answer nahi mila.\n\n"
-
-                    + outside_answer
-
-                )
-
-            else:
-
-                final_answer = (
-
-                    "🌐 Outside PDF Knowledge:\n\n"
-
-                    "The uploaded PDF does not contain "
-                    "relevant information for this question.\n\n"
-
-                    + outside_answer
-
-                )
-
-            return {
-
-                "answer": final_answer,
-
-                "sources": []
-
-            }
-
-    # -----------------------------------------------------
+    # =====================================================
     # BUILD PDF CONTEXT
-    # -----------------------------------------------------
+    # =====================================================
 
     context_parts = []
 
     for result in results:
 
         context_parts.append(
-
             f"[{result['filename']} - "
             f"Page {result['page']}]\n"
             f"{result['text']}"
-
         )
 
     context = "\n\n".join(
         context_parts
     )
 
-    # -----------------------------------------------------
-    # PDF ONLY
-    # -----------------------------------------------------
+    # =====================================================
+    # PDF ONLY MODE
+    # =====================================================
 
     if mode == "pdf_only":
 
-        answer = (
-
-            "📚 Answer from PDF:\n\n"
-
-            + context
-
-        )
-
-    # -----------------------------------------------------
-    # PDF + AI
-    # -----------------------------------------------------
-
-    else:
-
-        ai_answer = generate_answer(
-
-            question=question,
-
-            context=context,
-
-            language=language,
-
-            outside_knowledge=False
-
-        )
-
-        if ai_answer:
-
-            answer = (
-
-                "📚 Answer from PDF:\n\n"
-
-                + ai_answer
-
-            )
-
-        else:
-
-            answer = (
-
-                "📚 Relevant information found in PDF:\n\n"
-
+        return {
+            "answer": (
+                "📚 Relevant information from PDF:\n\n"
                 + context
+            ),
+            "sources": results
+        }
 
-                + "\n\n"
+    # =====================================================
+    # PDF + GEMINI
+    # =====================================================
 
-                "⚠️ AI provider is currently unavailable."
+    ai_answer = generate_answer(
+        question=question,
+        context=context,
+        language=language,
+        outside_knowledge=False
+    )
 
-            )
+    # =====================================================
+    # GEMINI SUCCESS
+    # =====================================================
 
-    # -----------------------------------------------------
-    # RETURN
-    # -----------------------------------------------------
+    if ai_answer:
+
+        return {
+            "answer": (
+                "📚 Answer from PDF + Gemini:\n\n"
+                + ai_answer
+            ),
+            "sources": results
+        }
+
+    # =====================================================
+    # GEMINI UNAVAILABLE
+    # =====================================================
 
     return {
-
-        "answer": answer,
-
+        "answer": (
+            "📚 Relevant information found in PDF:\n\n"
+            + context
+            + "\n\n"
+            "⚠️ Gemini is currently unavailable."
+        ),
         "sources": results
-
     }
 
 
@@ -1066,3 +732,5 @@ def load_existing_pdfs(
                 record.filename
 
             )
+
+

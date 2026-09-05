@@ -5,8 +5,9 @@ import { getPDFLibrary, generateStudyGuide } from "../services/api";
 function StudyGuide() {
   const [pdfs, setPdfs] = useState([]);
   const [selectedPDF, setSelectedPDF] = useState("");
+
   const [language, setLanguage] = useState("english");
-  const [questionCount, setQuestionCount] = useState(5);
+  const [questionCount, setQuestionCount] = useState("5");
 
   const [summary, setSummary] = useState("");
   const [questions, setQuestions] = useState([]);
@@ -14,12 +15,18 @@ function StudyGuide() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // =====================================================
+  // LOAD PDF LIBRARY
+  // =====================================================
+
   useEffect(() => {
     loadPDFs();
   }, []);
 
   const loadPDFs = async () => {
     try {
+      setError("");
+
       const data = await getPDFLibrary();
 
       setPdfs(data);
@@ -32,26 +39,31 @@ function StudyGuide() {
     }
   };
 
+  // =====================================================
+  // GENERATE STUDY GUIDE
+  // =====================================================
+
   const handleGenerate = async () => {
     if (!selectedPDF) {
       setError("Please select a PDF.");
       return;
     }
 
-    setLoading(true);
-    setError("");
-    setSummary("");
-    setQuestions([]);
-
     try {
+      setLoading(true);
+      setError("");
+
+      setSummary("");
+      setQuestions([]);
+
       const data = await generateStudyGuide({
         document_id: selectedPDF,
         question_count: Number(questionCount),
-        language: language
+        language: language,
       });
 
-      setSummary(data.summary);
-      setQuestions(data.important_questions);
+      setSummary(data.summary || "");
+      setQuestions(data.important_questions || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -59,14 +71,21 @@ function StudyGuide() {
     }
   };
 
+  // =====================================================
+  // UI
+  // =====================================================
+
   return (
     <div className="min-h-screen bg-gray-100">
 
-      {/* Navbar */}
+      {/* =================================================
+          NAVBAR
+      ================================================= */}
+
       <nav className="bg-indigo-600 text-white px-6 py-4 flex justify-between items-center">
 
         <h1 className="text-xl font-bold">
-          📚 AI Study Assistant
+          📚 Shaan AI Study Assistant
         </h1>
 
         <Link
@@ -79,10 +98,14 @@ function StudyGuide() {
       </nav>
 
 
-      {/* Main */}
+      {/* =================================================
+          MAIN
+      ================================================= */}
+
       <main className="max-w-5xl mx-auto px-6 py-10">
 
         {/* Heading */}
+
         <div className="mb-8">
 
           <h2 className="text-4xl font-bold text-gray-900">
@@ -90,16 +113,20 @@ function StudyGuide() {
           </h2>
 
           <p className="text-xl text-gray-500 mt-3">
-            Get a summary, important questions and solutions from your PDF.
+            Generate a complete study guide from your PDF using Shaan AI.
           </p>
 
         </div>
 
 
-        {/* Generator Card */}
+        {/* =================================================
+            GENERATOR CARD
+        ================================================= */}
+
         <div className="bg-white rounded-3xl shadow-md border border-gray-200 p-8">
 
-          {/* Select PDF */}
+          {/* PDF */}
+
           <label className="block text-lg font-semibold text-gray-800 mb-3">
             Select PDF
           </label>
@@ -111,24 +138,33 @@ function StudyGuide() {
           >
 
             {pdfs.length === 0 ? (
+
               <option value="">
                 No PDF available
               </option>
+
             ) : (
+
               pdfs.map((pdf) => (
+
                 <option
                   key={pdf.document_id}
                   value={pdf.document_id}
                 >
                   {pdf.filename}
                 </option>
+
               ))
+
             )}
 
           </select>
 
 
-          {/* Language */}
+          {/* =================================================
+              LANGUAGE
+          ================================================= */}
+
           <label className="block text-lg font-semibold text-gray-800 mt-6 mb-3">
             Language
           </label>
@@ -150,7 +186,10 @@ function StudyGuide() {
           </select>
 
 
-          {/* Number of Questions */}
+          {/* =================================================
+              QUESTION COUNT
+          ================================================= */}
+
           <label className="block text-lg font-semibold text-gray-800 mt-6 mb-3">
             Number of Important Questions
           </label>
@@ -161,15 +200,42 @@ function StudyGuide() {
             className="w-full px-5 py-4 text-lg border-2 border-gray-300 rounded-2xl outline-none focus:border-indigo-500 transition"
           >
 
-            <option value="5">5 Questions</option>
-            <option value="10">10 Questions</option>
-            <option value="15">15 Questions</option>
-            <option value="20">20 Questions</option>
+            <option value="5">
+              5 Questions
+            </option>
+
+            <option value="10">
+              10 Questions
+            </option>
+
+            <option value="15">
+              15 Questions
+            </option>
+
+            <option value="20">
+              20 Questions
+            </option>
 
           </select>
 
 
-          {/* Generate Button */}
+          {/* =================================================
+              ERROR
+          ================================================= */}
+
+          {error && (
+
+            <div className="mt-6 bg-red-50 border border-red-200 text-red-600 px-5 py-4 rounded-xl text-lg">
+              {error}
+            </div>
+
+          )}
+
+
+          {/* =================================================
+              GENERATE BUTTON
+          ================================================= */}
+
           <button
             onClick={handleGenerate}
             disabled={loading || !selectedPDF}
@@ -177,24 +243,19 @@ function StudyGuide() {
           >
 
             {loading
-              ? "🤖 Generating Study Guide..."
+              ? "🤖 Shaan AI is generating..."
               : "✨ Generate Study Guide"
             }
 
           </button>
 
-
-          {/* Error */}
-          {error && (
-            <div className="mt-6 bg-red-50 border border-red-200 text-red-600 px-5 py-4 rounded-xl text-lg">
-              {error}
-            </div>
-          )}
-
         </div>
 
 
-        {/* Summary */}
+        {/* =================================================
+            SUMMARY
+        ================================================= */}
+
         {summary && (
 
           <div className="bg-white rounded-3xl shadow-md border border-gray-200 p-8 mt-8">
@@ -212,7 +273,10 @@ function StudyGuide() {
         )}
 
 
-        {/* Important Questions */}
+        {/* =================================================
+            IMPORTANT QUESTIONS
+        ================================================= */}
+
         {questions.length > 0 && (
 
           <div className="mt-8">

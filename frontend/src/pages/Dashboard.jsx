@@ -22,8 +22,8 @@ function Dashboard() {
           </h1>
 
           <p className="text-xs text-indigo-100 mt-1 ml-7">
-            ✦ Powered by 𝓢𝓱𝓪𝓪𝓷 𝓔 𝓢𝓪𝓱𝓲𝓵 ✦
-          </p>
+  ✦ Built by 𝓢𝓱𝓪𝓪𝓷 𝓔 𝓢𝓪𝓱𝓲𝓵 ✦
+</p>
         </div>
 
         {/* Logout */}
@@ -76,8 +76,8 @@ function Dashboard() {
             </h3>
 
             <p className="text-gray-500 text-lg mt-3">
-              Ask anything and get answers from Ollama AI.
-            </p>
+  Ask anything and get answers from Shaan AI.
+</p>
           </Link>
 
           {/* Flashcards */}

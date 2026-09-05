@@ -1,7 +1,11 @@
 from typing import List, Optional
-from pydantic import EmailStr
+
 from pydantic import BaseModel, ConfigDict, EmailStr
 
+
+# =========================================================
+# STUDENT
+# =========================================================
 
 class StudentCreate(BaseModel):
     name: str
@@ -24,9 +28,15 @@ class StudentResponse(BaseModel):
     email: EmailStr
     branch: str
     year: Optional[int]
-    
-    model_config = ConfigDict(from_attributes=True)
 
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+
+# =========================================================
+# AUTHENTICATION
+# =========================================================
 
 class RegisterRequest(BaseModel):
     name: str
@@ -46,6 +56,10 @@ class TokenResponse(BaseModel):
     token_type: str
 
 
+# =========================================================
+# PDF
+# =========================================================
+
 class PDFLibraryResponse(BaseModel):
     document_id: str
     filename: str
@@ -63,7 +77,7 @@ class RetrievedSource(BaseModel):
 
 class PDFAskRequest(BaseModel):
     question: str
-    mode: str = "pdf_ollama"
+    mode: str = "pdf_gemini"
     language: str = "english"
     selected_documents: Optional[List[str]] = None
     top_k: int = 5
@@ -73,10 +87,21 @@ class PDFAskResponse(BaseModel):
     answer: str
     sources: List[RetrievedSource]
 
+
+# =========================================================
+# STUDY GUIDE
+# =========================================================
+
 class StudyGuideRequest(BaseModel):
     document_id: str
     question_count: int = 5
     language: str = "english"
+
+
+# =========================================================
+# QUIZ
+# =========================================================
+
 class QuizGenerateRequest(BaseModel):
     mode: str = "pdf"
     document_id: Optional[str] = None

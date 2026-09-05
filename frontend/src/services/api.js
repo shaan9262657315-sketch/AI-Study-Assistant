@@ -185,3 +185,8 @@ export const generateFlashcards = async (flashcardData) =>
     },
     body: JSON.stringify(flashcardData)
   });
+export const deletePDF = async (documentId) => {
+  return apiFetch(`/pdf/library/${documentId}`, {
+    method: "DELETE",
+  });
+};

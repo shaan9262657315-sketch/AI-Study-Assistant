@@ -1,19 +1,31 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile
+)
+
 from sqlalchemy.orm import Session
 
 from database import get_db
 from dependencies import get_current_user
 from models import PDFDocument, Student
+
 from rag import (
     ask_question,
     index_pdf,
     load_existing_pdfs,
     remove_document
 )
-from schemas import PDFAskRequest, PDFAskResponse
+
+from schemas import (
+    PDFAskRequest,
+    PDFAskResponse
+)
 
 
 router = APIRouter(
@@ -22,193 +34,468 @@ router = APIRouter(
 )
 
 
-PDF_FOLDER = "pdfs"
-os.makedirs(PDF_FOLDER, exist_ok=True)
+# =========================================================
+# CONFIG
+# =========================================================
 
+PDF_FOLDER = "pdfs"
+
+os.makedirs(
+    PDF_FOLDER,
+    exist_ok=True
+)
+
+
+# =========================================================
+# UPLOAD PDF
+# =========================================================
 
 @router.post("/upload")
 async def upload_pdf(
+
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user)
+
+    db: Session = Depends(
+        get_db
+    ),
+
+    current_user: Student = Depends(
+        get_current_user
+    )
+
 ):
+
+    # -----------------------------------------------------
+    # CHECK FILE TYPE
+    # -----------------------------------------------------
+
     if not file.filename.lower().endswith(".pdf"):
+
         raise HTTPException(
+
             status_code=400,
+
             detail="Only PDF files are allowed"
+
         )
 
-    document_id = str(uuid.uuid4())
+    # -----------------------------------------------------
+    # DOCUMENT ID
+    # -----------------------------------------------------
 
-    safe_filename = os.path.basename(file.filename)
+    document_id = str(
+        uuid.uuid4()
+    )
+
+    # -----------------------------------------------------
+    # SAFE FILENAME
+    # -----------------------------------------------------
+
+    safe_filename = os.path.basename(
+        file.filename
+    )
 
     stored_filename = (
         f"{document_id}_{safe_filename}"
     )
 
     file_path = os.path.join(
+
         PDF_FOLDER,
+
         stored_filename
+
     )
+
+    # -----------------------------------------------------
+    # SAVE PDF
+    # -----------------------------------------------------
 
     content = await file.read()
 
-    with open(file_path, "wb") as pdf_file:
-        pdf_file.write(content)
+    with open(
+        file_path,
+        "wb"
+    ) as pdf_file:
+
+        pdf_file.write(
+            content
+        )
+
+    # -----------------------------------------------------
+    # INDEX PDF
+    # -----------------------------------------------------
 
     try:
+
         page_count = index_pdf(
+
             file_path,
+
             document_id,
+
             safe_filename
+
         )
-    except Exception:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+
+    except Exception as e:
+
+        if os.path.exists(
+            file_path
+        ):
+
+            os.remove(
+                file_path
+            )
+
+        print(
+            "PDF indexing error:",
+            e
+        )
 
         raise HTTPException(
+
             status_code=400,
+
             detail="Could not process PDF"
+
         )
 
+    # -----------------------------------------------------
+    # DATABASE RECORD
+    # -----------------------------------------------------
+
     record = PDFDocument(
+
         document_id=document_id,
+
         filename=safe_filename,
+
         file_path=file_path,
+
         page_count=page_count
+
     )
 
-    db.add(record)
+    db.add(
+        record
+    )
+
     db.commit()
-    db.refresh(record)
+
+    db.refresh(
+        record
+    )
 
     return {
-        "message": "PDF uploaded successfully",
-        "document_id": document_id,
-        "filename": safe_filename,
-        "page_count": page_count
+
+        "message":
+            "PDF uploaded successfully",
+
+        "document_id":
+            document_id,
+
+        "filename":
+            safe_filename,
+
+        "page_count":
+            page_count
+
     }
 
+
+# =========================================================
+# PDF LIBRARY
+# =========================================================
 
 @router.get("/library")
 def get_pdf_library(
-    db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user)
+
+    db: Session = Depends(
+        get_db
+    ),
+
+    current_user: Student = Depends(
+        get_current_user
+    )
+
 ):
+
     records = (
-        db.query(PDFDocument)
-        .order_by(PDFDocument.id.desc())
+
+        db.query(
+            PDFDocument
+        )
+
+        .order_by(
+            PDFDocument.id.desc()
+        )
+
         .all()
+
     )
 
     return [
+
         {
-            "document_id": record.document_id,
-            "filename": record.filename,
-            "page_count": record.page_count,
+
+            "document_id":
+                record.document_id,
+
+            "filename":
+                record.filename,
+
+            "page_count":
+                record.page_count,
+
             "uploaded_at": (
+
                 record.uploaded_at.isoformat()
+
                 if record.uploaded_at
+
                 else None
+
             )
+
         }
+
         for record in records
+
     ]
 
 
+# =========================================================
+# GET SINGLE PDF
+# =========================================================
+
 @router.get("/library/{document_id}")
 def get_document(
+
     document_id: str,
-    db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user)
+
+    db: Session = Depends(
+        get_db
+    ),
+
+    current_user: Student = Depends(
+        get_current_user
+    )
+
 ):
+
     record = (
-        db.query(PDFDocument)
-        .filter(
-            PDFDocument.document_id == document_id
+
+        db.query(
+            PDFDocument
         )
+
+        .filter(
+
+            PDFDocument.document_id
+            == document_id
+
+        )
+
         .first()
+
     )
 
     if not record:
+
         raise HTTPException(
+
             status_code=404,
+
             detail="PDF not found"
+
         )
 
     return {
-        "document_id": record.document_id,
-        "filename": record.filename,
-        "page_count": record.page_count,
+
+        "document_id":
+            record.document_id,
+
+        "filename":
+            record.filename,
+
+        "page_count":
+            record.page_count,
+
         "uploaded_at": (
+
             record.uploaded_at.isoformat()
+
             if record.uploaded_at
+
             else None
+
         )
+
     }
 
+
+# =========================================================
+# DELETE PDF
+# =========================================================
 
 @router.delete("/library/{document_id}")
 def delete_document(
+
     document_id: str,
-    db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user)
+
+    db: Session = Depends(
+        get_db
+    ),
+
+    current_user: Student = Depends(
+        get_current_user
+    )
+
 ):
+
     record = (
-        db.query(PDFDocument)
-        .filter(
-            PDFDocument.document_id == document_id
+
+        db.query(
+            PDFDocument
         )
+
+        .filter(
+
+            PDFDocument.document_id
+            == document_id
+
+        )
+
         .first()
+
     )
 
     if not record:
+
         raise HTTPException(
+
             status_code=404,
+
             detail="PDF not found"
+
         )
 
-    if os.path.exists(record.file_path):
-        os.remove(record.file_path)
+    # -----------------------------------------------------
+    # DELETE FILE
+    # -----------------------------------------------------
 
-    remove_document(document_id)
+    if os.path.exists(
+        record.file_path
+    ):
 
-    db.delete(record)
+        os.remove(
+            record.file_path
+        )
+
+    # -----------------------------------------------------
+    # REMOVE FROM RAG INDEX
+    # -----------------------------------------------------
+
+    remove_document(
+        document_id
+    )
+
+    # -----------------------------------------------------
+    # DELETE DATABASE RECORD
+    # -----------------------------------------------------
+
+    db.delete(
+        record
+    )
+
     db.commit()
 
     return {
-        "message": "PDF deleted successfully",
-        "document_id": document_id
+
+        "message":
+            "PDF deleted successfully",
+
+        "document_id":
+            document_id
+
     }
 
+
+# =========================================================
+# RELOAD PDF LIBRARY
+# =========================================================
 
 @router.post("/reload")
 def reload_pdf_library(
-    db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user)
-):
-    records = db.query(PDFDocument).all()
 
-    load_existing_pdfs(records)
+    db: Session = Depends(
+        get_db
+    ),
+
+    current_user: Student = Depends(
+        get_current_user
+    )
+
+):
+
+    records = (
+        db.query(
+            PDFDocument
+        )
+        .all()
+    )
+
+    load_existing_pdfs(
+        records
+    )
 
     return {
-        "message": "PDF library reloaded",
-        "documents_loaded": len(records)
+
+        "message":
+            "PDF library reloaded",
+
+        "documents_loaded":
+            len(records)
+
     }
 
 
-@router.post("/ask", response_model=PDFAskResponse)
+# =========================================================
+# ASK QUESTION FROM PDF
+# =========================================================
+
+@router.post(
+    "/ask",
+    response_model=PDFAskResponse
+)
 def ask_pdf_question(
+
     data: PDFAskRequest,
-    db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user)
+
+    db: Session = Depends(
+        get_db
+    ),
+
+    current_user: Student = Depends(
+        get_current_user
+    )
+
 ):
+
     result = ask_question(
+
         question=data.question,
+
         mode=data.mode,
+
         language=data.language,
-        selected_documents=data.selected_documents,
+
+        selected_documents=
+            data.selected_documents,
+
         top_k=data.top_k
+
     )
 
     return result
