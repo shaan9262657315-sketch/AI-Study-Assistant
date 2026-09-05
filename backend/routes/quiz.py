@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 import json
 import re
+import time
 from typing import Optional
 
 import rag
@@ -57,55 +58,55 @@ def call_gemini(prompt: str):
             )
         )
 
-    try:
+    max_retries = 3
+    delay = 2
 
-        response = (
-            rag.gemini_client
-            .models
-            .generate_content(
-
-                model=GEMINI_MODEL,
-
-                contents=prompt,
-
-                config={
-                    "response_mime_type":
-                        "application/json"
-                }
-
-            )
-        )
-
-        answer = getattr(
-            response,
-            "text",
-            None
-        )
-
-        if not answer:
-
-            raise HTTPException(
-                status_code=500,
-                detail="Gemini returned an empty response."
+    for attempt in range(max_retries):
+        try:
+            response = (
+                rag.gemini_client
+                .models
+                .generate_content(
+                    model=GEMINI_MODEL,
+                    contents=prompt,
+                    config={
+                        "response_mime_type":
+                            "application/json"
+                    }
+                )
             )
 
-        return answer.strip()
+            answer = getattr(
+                response,
+                "text",
+                None
+            )
 
-    except HTTPException:
+            if not answer:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Gemini returned an empty response."
+                )
 
-        raise
+            return answer.strip()
 
-    except Exception as e:
+        except HTTPException as he:
+            raise he
 
-        print(
-            "Gemini Quiz Error:",
-            e
-        )
+        except Exception as e:
+            print(
+                f"Gemini Quiz Error (Attempt {attempt + 1}/{max_retries}):",
+                e
+            )
 
-        raise HTTPException(
-            status_code=500,
-            detail=f"Gemini request failed: {str(e)}"
-        )
+            if attempt == max_retries - 1:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Gemini request failed after {max_retries} attempts: {str(e)}"
+                )
+
+            time.sleep(delay)
+            delay *= 2
 
 
 # =========================================================
