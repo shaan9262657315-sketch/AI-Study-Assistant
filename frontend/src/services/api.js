@@ -13,7 +13,7 @@ export const clearToken = () => {
   localStorage.removeItem("token");
 };
 
-const apiFetch = async (endpoint, options = {}) => {
+export const apiFetch = async (endpoint, options = {}) => {
   const token = getToken();
 
   const headers = {
@@ -117,7 +117,6 @@ export const getStatistics = async () => {
 
 export const uploadPDF = async (file) => {
   const formData = new FormData();
-
   formData.append("file", file);
 
   return apiFetch("/pdf/upload", {
@@ -145,17 +144,69 @@ export const reloadPDFs = async () => {
     method: "POST",
   });
 };
-export const askChatQuestion = async (question) => apiFetch("/chat/ask", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify({
-    question: question
-  })
-});
 
-// ==================== QUIZ ====================
+export const deletePDF = async (documentId) => {
+  return apiFetch(`/pdf/library/${documentId}`, {
+    method: "DELETE",
+  });
+};
+
+
+// ==================== CHAT ====================
+
+export const askChatQuestion = async (question) => {
+  return apiFetch("/chat/ask", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      question: question
+    })
+  });
+};
+
+export const getChatHistory = async () => {
+  return apiFetch("/chat/history");
+};
+
+export const deleteChatHistory = async (historyId) => {
+  return apiFetch(`/chat/history/${historyId}`, {
+    method: "DELETE",
+  });
+};
+
+export const deleteAllChatHistory = async () => {
+  return apiFetch("/chat/history", {
+    method: "DELETE",
+  });
+};
+
+
+// ==================== FLASHCARDS ====================
+
+export const generateFlashcards = async (flashcardData) => {
+  return apiFetch("/flashcards/generate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(flashcardData)
+  });
+};
+
+export const getFlashcardLibrary = async () => {
+  return apiFetch("/flashcards/library");
+};
+
+export const deleteFlashcardSet = async (id) => {
+  return apiFetch(`/flashcards/library/${id}`, {
+    method: "DELETE",
+  });
+};
+
+
+// ==================== QUIZ & STUDY GUIDE ====================
 
 export const generateQuiz = async (quizData) => {
   return apiFetch("/quiz/generate", {
@@ -166,6 +217,23 @@ export const generateQuiz = async (quizData) => {
     body: JSON.stringify(quizData),
   });
 };
+
+export const getQuizHistory = async () => {
+  return apiFetch("/quiz/history");
+};
+
+export const deleteQuizHistory = async (historyId) => {
+  return apiFetch(`/quiz/history/${historyId}`, {
+    method: "DELETE",
+  });
+};
+
+export const deleteAllQuizHistory = async () => {
+  return apiFetch("/quiz/history", {
+    method: "DELETE",
+  });
+};
+
 export const generateStudyGuide = async (studyData) => {
   return apiFetch("/study-guide/generate", {
     method: "POST",
@@ -173,20 +241,5 @@ export const generateStudyGuide = async (studyData) => {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(studyData),
-  });
-};
-// FLASHCARDS
-
-export const generateFlashcards = async (flashcardData) =>
-  apiFetch("/flashcards/generate", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(flashcardData)
-  });
-export const deletePDF = async (documentId) => {
-  return apiFetch(`/pdf/library/${documentId}`, {
-    method: "DELETE",
   });
 };

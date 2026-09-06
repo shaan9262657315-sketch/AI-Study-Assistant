@@ -1,9 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes.flashcards import router as flashcards_router
 from database import Base, engine, SessionLocal
-from models import PDFDocument
-
+from models import PDFDocument, FlashcardHistory
 from rag import load_existing_pdfs
 
 from routes.auth import router as auth_router
@@ -12,10 +10,33 @@ from routes.pdf import router as pdf_router
 from routes.chat import router as chat_router
 from routes.quiz import router as quiz_router
 from routes.study import router as study_router
+from routes.flashcards import router as flashcards_router
 
 
 # =====================================================
-# DATABASE
+# FASTAPI APP INITIALIZATION
+# =====================================================
+
+app = FastAPI(
+    title="AI Study Assistant"
+)
+
+
+# =====================================================
+# CORS MIDDLEWARE
+# =====================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# =====================================================
+# DATABASE TABLES CREATION
 # =====================================================
 
 Base.metadata.create_all(bind=engine)
@@ -35,28 +56,6 @@ finally:
 
 
 # =====================================================
-# FASTAPI APP
-# =====================================================
-
-app = FastAPI(
-    title="AI Study Assistant"
-)
-
-
-# =====================================================
-# CORS
-# =====================================================
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# =====================================================
 # ROUTES
 # =====================================================
 
@@ -67,6 +66,7 @@ app.include_router(chat_router)
 app.include_router(quiz_router)
 app.include_router(study_router)
 app.include_router(flashcards_router)
+
 
 # =====================================================
 # ROOT

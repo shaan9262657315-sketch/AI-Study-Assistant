@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AI Study Assistant</string>
+    <string name="title_activity_main">AI Study Assistant</string>
+    <string name="package_name">com.sahil.aistudyassistant</string>
+    <string name="custom_url_scheme">com.sahil.aistudyassistant</string>
+</resources>

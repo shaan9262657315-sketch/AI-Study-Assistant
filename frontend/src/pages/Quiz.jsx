@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getPDFLibrary, generateQuiz } from "../services/api";
+import {
+  getPDFLibrary,
+  generateQuiz,
+  getQuizHistory,
+  deleteQuizHistory,
+  deleteAllQuizHistory,
+} from "../services/api";
 
 function Quiz() {
   // =====================================================
@@ -30,6 +36,13 @@ function Quiz() {
   const [error, setError] = useState("");
 
   // =====================================================
+  // HISTORY
+  // =====================================================
+
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // =====================================================
   // TIMER
   // =====================================================
 
@@ -37,11 +50,12 @@ function Quiz() {
   const [quizStarted, setQuizStarted] = useState(false);
 
   // =====================================================
-  // LOAD PDFs
+  // LOAD PDFs & HISTORY
   // =====================================================
 
   useEffect(() => {
     loadPDFs();
+    loadQuizHistory();
   }, []);
 
   const loadPDFs = async () => {
@@ -57,6 +71,36 @@ function Quiz() {
       }
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const loadQuizHistory = async () => {
+    try {
+      setHistoryLoading(true);
+      const data = await getQuizHistory();
+      setHistory(data || []);
+    } catch (err) {
+      console.error("Failed to load quiz history:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleDeleteHistory = async (historyId) => {
+    try {
+      await deleteQuizHistory(historyId);
+      loadQuizHistory();
+    } catch (err) {
+      setError(err.message || "Failed to delete history item.");
+    }
+  };
+
+  const handleDeleteAllHistory = async () => {
+    try {
+      await deleteAllQuizHistory();
+      loadQuizHistory();
+    } catch (err) {
+      setError(err.message || "Failed to clear quiz history.");
     }
   };
 
@@ -179,6 +223,9 @@ function Quiz() {
 
       setQuestions(generatedQuestions);
 
+      // Reload history so the new quiz reflects immediately
+      loadQuizHistory();
+
       // -------------------------------------------------
       // TIMER
       // 2 MINUTES PER QUESTION
@@ -249,6 +296,7 @@ function Quiz() {
     setQuizStarted(false);
     setTimeLeft(0);
     setError("");
+    loadQuizHistory();
   };
 
   // =====================================================
@@ -303,292 +351,345 @@ function Quiz() {
 
         {questions.length === 0 && (
 
-          <div className="bg-white rounded-2xl shadow p-6">
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl shadow p-6">
 
-            {/* MODE BUTTONS */}
+              {/* MODE BUTTONS */}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-7">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-7">
 
-              {/* TOPIC MODE */}
+                {/* TOPIC MODE */}
 
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("topic");
-                  setError("");
-                }}
-                className={`p-5 rounded-2xl border-2 text-left transition ${
-                  mode === "topic"
-                    ? "border-indigo-600 bg-indigo-50"
-                    : "border-gray-200 hover:border-indigo-300"
-                }`}
-              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("topic");
+                    setError("");
+                  }}
+                  className={`p-5 rounded-2xl border-2 text-left transition ${
+                    mode === "topic"
+                      ? "border-indigo-600 bg-indigo-50"
+                      : "border-gray-200 hover:border-indigo-300"
+                  }`}
+                >
 
-                <h3 className="text-xl font-bold text-gray-800">
-                  🤖 Shaan AI Topic Quiz
-                </h3>
+                  <h3 className="text-xl font-bold text-gray-800">
+                    🤖 Shaan AI Topic Quiz
+                  </h3>
 
-                <p className="text-gray-500 mt-2">
-                  Enter any topic and Shaan AI will generate
-                  a quiz using AI knowledge.
-                </p>
+                  <p className="text-gray-500 mt-2">
+                    Enter any topic and Shaan AI will generate
+                    a quiz using AI knowledge.
+                  </p>
 
-              </button>
+                </button>
 
-              {/* PDF MODE */}
+                {/* PDF MODE */}
 
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("pdf");
-                  setError("");
-                }}
-                className={`p-5 rounded-2xl border-2 text-left transition ${
-                  mode === "pdf"
-                    ? "border-indigo-600 bg-indigo-50"
-                    : "border-gray-200 hover:border-indigo-300"
-                }`}
-              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("pdf");
+                    setError("");
+                  }}
+                  className={`p-5 rounded-2xl border-2 text-left transition ${
+                    mode === "pdf"
+                      ? "border-indigo-600 bg-indigo-50"
+                      : "border-gray-200 hover:border-indigo-300"
+                  }`}
+                >
 
-                <h3 className="text-xl font-bold text-gray-800">
-                  📚 My PDF Quiz
-                </h3>
+                  <h3 className="text-xl font-bold text-gray-800">
+                    📚 My PDF Quiz
+                  </h3>
 
-                <p className="text-gray-500 mt-2">
-                  Generate questions from your uploaded PDF
-                  using Shaan AI.
-                </p>
+                  <p className="text-gray-500 mt-2">
+                    Generate questions from your uploaded PDF
+                    using Shaan AI.
+                  </p>
 
-              </button>
+                </button>
 
-            </div>
+              </div>
 
-            <form onSubmit={handleGenerate}>
+              <form onSubmit={handleGenerate}>
 
-              {/* =================================================
-                  PDF SELECT
-              ================================================= */}
+                {/* =================================================
+                    PDF SELECT
+                ================================================= */}
 
-              {mode === "pdf" && (
+                {mode === "pdf" && (
+
+                  <div className="mb-5">
+
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Select PDF
+                    </label>
+
+                    <select
+                      value={selectedPDF}
+                      onChange={(e) =>
+                        setSelectedPDF(e.target.value)
+                      }
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                    >
+
+                      {pdfs.length === 0 ? (
+
+                        <option value="">
+                          No PDFs available
+                        </option>
+
+                      ) : (
+
+                        pdfs.map((pdf) => (
+
+                          <option
+                            key={pdf.document_id}
+                            value={pdf.document_id}
+                          >
+                            {pdf.filename}
+                          </option>
+
+                        ))
+
+                      )}
+
+                    </select>
+
+                  </div>
+
+                )}
+
+                {/* =================================================
+                    TOPIC
+                ================================================= */}
 
                 <div className="mb-5">
 
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Select PDF
+
+                    {mode === "topic"
+                      ? "Enter Topic"
+                      : "PDF Topic (Optional)"}
+
+                  </label>
+
+                  <input
+                    type="text"
+                    value={topic}
+                    onChange={(e) =>
+                      setTopic(e.target.value)
+                    }
+                    placeholder={
+                      mode === "topic"
+                        ? "Example: Java OOP"
+                        : "Example: String Class"
+                    }
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+
+                  {mode === "pdf" && (
+
+                    <p className="text-sm text-gray-500 mt-2">
+                      Leave empty to generate questions from
+                      important concepts in the selected PDF.
+                    </p>
+
+                  )}
+
+                </div>
+
+                {/* =================================================
+                    DIFFICULTY
+                ================================================= */}
+
+                <div className="mb-5">
+
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Difficulty
                   </label>
 
                   <select
-                    value={selectedPDF}
+                    value={difficulty}
                     onChange={(e) =>
-                      setSelectedPDF(e.target.value)
+                      setDifficulty(e.target.value)
                     }
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
                   >
 
-                    {pdfs.length === 0 ? (
+                    <option value="easy">
+                      Easy
+                    </option>
 
-                      <option value="">
-                        No PDFs available
-                      </option>
+                    <option value="medium">
+                      Medium
+                    </option>
 
-                    ) : (
-
-                      pdfs.map((pdf) => (
-
-                        <option
-                          key={pdf.document_id}
-                          value={pdf.document_id}
-                        >
-                          {pdf.filename}
-                        </option>
-
-                      ))
-
-                    )}
+                    <option value="hard">
+                      Hard
+                    </option>
 
                   </select>
 
                 </div>
 
-              )}
-
-              {/* =================================================
-                  TOPIC
-              ================================================= */}
-
-              <div className="mb-5">
-
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-
-                  {mode === "topic"
-                    ? "Enter Topic"
-                    : "PDF Topic (Optional)"}
-
-                </label>
-
-                <input
-                  type="text"
-                  value={topic}
-                  onChange={(e) =>
-                    setTopic(e.target.value)
-                  }
-                  placeholder={
-                    mode === "topic"
-                      ? "Example: Java OOP"
-                      : "Example: String Class"
-                  }
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-
-                {mode === "pdf" && (
-
-                  <p className="text-sm text-gray-500 mt-2">
-                    Leave empty to generate questions from
-                    important concepts in the selected PDF.
-                  </p>
-
-                )}
-
-              </div>
-
-              {/* =================================================
-                  DIFFICULTY
-              ================================================= */}
-
-              <div className="mb-5">
-
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Difficulty
-                </label>
-
-                <select
-                  value={difficulty}
-                  onChange={(e) =>
-                    setDifficulty(e.target.value)
-                  }
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-
-                  <option value="easy">
-                    Easy
-                  </option>
-
-                  <option value="medium">
-                    Medium
-                  </option>
-
-                  <option value="hard">
-                    Hard
-                  </option>
-
-                </select>
-
-              </div>
-
-              {/* =================================================
-                  QUESTION COUNT
-              ================================================= */}
-
-              <div className="mb-5">
-
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Number of Questions
-                </label>
-
-                <select
-                  value={questionCount}
-                  onChange={(e) =>
-                    setQuestionCount(e.target.value)
-                  }
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-
-                  <option value="5">
-                    5 Questions
-                  </option>
-
-                  <option value="10">
-                    10 Questions
-                  </option>
-
-                  <option value="15">
-                    15 Questions
-                  </option>
-
-                  <option value="20">
-                    20 Questions
-                  </option>
-
-                  <option value="custom">
-                    Custom
-                  </option>
-
-                </select>
-
-              </div>
-
-              {/* =================================================
-                  CUSTOM COUNT
-              ================================================= */}
-
-              {questionCount === "custom" && (
+                {/* =================================================
+                    QUESTION COUNT
+                ================================================= */}
 
                 <div className="mb-5">
 
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Enter Number of Questions
+                    Number of Questions
                   </label>
 
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    value={customCount}
+                  <select
+                    value={questionCount}
                     onChange={(e) =>
-                      setCustomCount(e.target.value)
+                      setQuestionCount(e.target.value)
                     }
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                  >
+
+                    <option value="5">
+                      5 Questions
+                    </option>
+
+                    <option value="10">
+                      10 Questions
+                    </option>
+
+                    <option value="15">
+                      15 Questions
+                    </option>
+
+                    <option value="20">
+                      20 Questions
+                    </option>
+
+                    <option value="custom">
+                      Custom
+                    </option>
+
+                  </select>
 
                 </div>
 
-              )}
+                {/* =================================================
+                    CUSTOM COUNT
+                ================================================= */}
 
-              {/* =================================================
-                  ERROR
-              ================================================= */}
+                {questionCount === "custom" && (
 
-              {error && (
+                  <div className="mb-5">
 
-                <div className="mb-5 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Enter Number of Questions
+                    </label>
 
-                  {error}
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={customCount}
+                      onChange={(e) =>
+                        setCustomCount(e.target.value)
+                      }
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
 
+                  </div>
+
+                )}
+
+                {/* =================================================
+                    ERROR
+                ================================================= */}
+
+                {error && (
+
+                  <div className="mb-5 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl">
+
+                    {error}
+
+                  </div>
+
+                )}
+
+                {/* =================================================
+                    GENERATE BUTTON
+                ================================================= */}
+
+                <button
+                  type="submit"
+                  disabled={
+                    loading ||
+                    (mode === "pdf" && pdfs.length === 0)
+                  }
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 rounded-xl transition disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+                >
+
+                  {loading
+                    ? "🤖 Shaan AI is generating..."
+                    : "✨ Generate Quiz"}
+
+                </button>
+
+              </form>
+
+            </div>
+
+            {/* =================================================
+                QUIZ HISTORY SECTION
+            ================================================= */}
+
+            <div className="bg-white rounded-2xl shadow p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-gray-800">
+                  📜 Quiz History
+                </h3>
+                {history.length > 0 && (
+                  <button
+                    onClick={handleDeleteAllHistory}
+                    className="text-sm text-red-600 hover:text-red-700 font-semibold cursor-pointer"
+                  >
+                    Clear All History
+                  </button>
+                )}
+              </div>
+
+              {historyLoading ? (
+                <p className="text-gray-500 py-4 text-center">Loading history...</p>
+              ) : history.length === 0 ? (
+                <p className="text-gray-500 py-4 text-center">No past quiz history found.</p>
+              ) : (
+                <div className="space-y-3">
+                  {history.map((item, index) => (
+                    <div
+                      key={item.id || index}
+                      className="border border-gray-200 rounded-xl p-4 flex justify-between items-center bg-gray-50"
+                    >
+                      <div>
+                        <p className="font-semibold text-gray-800">
+                          {item.topic || item.filename || "Quiz Session"}
+                        </p>
+                        <p className="text-sm text-gray-500 mt-1">
+                          Mode: <span className="uppercase">{item.mode}</span> | Difficulty: <span className="capitalize">{item.difficulty}</span> | Questions: {item.question_count}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteHistory(item.id)}
+                        className="text-red-500 hover:text-red-700 p-2 cursor-pointer"
+                        title="Delete entry"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
                 </div>
-
               )}
-
-              {/* =================================================
-                  GENERATE BUTTON
-              ================================================= */}
-
-              <button
-                type="submit"
-                disabled={
-                  loading ||
-                  (mode === "pdf" && pdfs.length === 0)
-                }
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 rounded-xl transition disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-
-                {loading
-                  ? "🤖 Shaan AI is generating..."
-                  : "✨ Generate Quiz"}
-
-              </button>
-
-            </form>
-
+            </div>
           </div>
 
         )}
@@ -689,7 +790,7 @@ function Quiz() {
                                 option
                               )
                             }
-                            className={`w-full text-left px-4 py-4 rounded-xl border-2 transition flex items-center gap-3
+                            className={`w-full text-left px-4 py-4 rounded-xl border-2 transition flex items-center gap-3 cursor-pointer
                               ${
                                 isCorrect
                                   ? "bg-green-50 border-green-500 text-green-700"
@@ -773,7 +874,7 @@ function Quiz() {
                     Object.keys(selectedAnswers).length !==
                     questions.length
                   }
-                  className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-4 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-4 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
 
                   ✅ Submit Quiz
@@ -808,7 +909,7 @@ function Quiz() {
 
                   <button
                     onClick={resetQuiz}
-                    className="mt-6 bg-indigo-600 hover:bg-indigo-700 text-white px-7 py-3 rounded-xl font-semibold"
+                    className="mt-6 bg-indigo-600 hover:bg-indigo-700 text-white px-7 py-3 rounded-xl font-semibold cursor-pointer"
                   >
 
                     🔄 Generate Another Quiz

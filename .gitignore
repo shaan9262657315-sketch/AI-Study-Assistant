@@ -20,3 +20,6 @@ node_modules/
 
 # Uploaded PDF files
 backend/pdfs/
+# Frontend environment
+frontend/.env.local
+frontend/.env

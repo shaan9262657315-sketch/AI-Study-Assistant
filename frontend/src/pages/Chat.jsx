@@ -1,12 +1,49 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { askChatQuestion } from "../services/api";
+
+import {
+  askChatQuestion,
+  getChatHistory,
+  deleteChatHistory,
+  deleteAllChatHistory,
+} from "../services/api";
 
 function Chat() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // =====================================================
+  // CHAT HISTORY
+  // =====================================================
+
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+
+  // =====================================================
+  // LOAD CHAT HISTORY
+  // =====================================================
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const data = await getChatHistory();
+
+        setHistory(data);
+      } catch (err) {
+        console.error("History Error:", err);
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+
+    loadHistory();
+  }, []);
+
+  // =====================================================
+  // ASK QUESTION
+  // =====================================================
 
   const handleAsk = async (e) => {
     e.preventDefault();
@@ -19,11 +56,62 @@ function Chat() {
 
     try {
       const data = await askChatQuestion(question);
+
       setAnswer(data.answer);
+
+      // -------------------------------------------------
+      // ADD NEW CHAT TO HISTORY
+      // -------------------------------------------------
+
+      setHistory((prev) => [
+        {
+          id: data.id,
+          question: question.trim(),
+          answer: data.answer,
+          created_at: data.created_at,
+        },
+        ...prev,
+      ]);
+
+      // Clear question box after successful request
+      setQuestion("");
+
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // =====================================================
+  // DELETE ONE CHAT
+  // =====================================================
+
+  const handleDelete = async (historyId) => {
+    try {
+      await deleteChatHistory(historyId);
+
+      setHistory((prev) =>
+        prev.filter((item) => item.id !== historyId)
+      );
+
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // =====================================================
+  // DELETE ALL CHAT HISTORY
+  // =====================================================
+
+  const handleDeleteAll = async () => {
+    try {
+      await deleteAllChatHistory();
+
+      setHistory([]);
+
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -33,8 +121,8 @@ function Chat() {
       {/* Navbar */}
       <nav className="bg-indigo-600 text-white px-6 py-4 flex justify-between items-center">
         <h1 className="text-xl font-bold">
-  🤖 Shaan AI — Study Assistant
-</h1>
+          🤖 Shaan AI — Study Assistant
+        </h1>
 
         <Link
           to="/"
@@ -53,8 +141,8 @@ function Chat() {
           </h2>
 
           <p className="text-xl text-gray-500 mt-4">
-  Ask anything and get an answer from Shaan AI.
-</p>
+            Ask anything and get an answer from Shaan AI.
+          </p>
         </div>
 
         {/* Question Box */}
@@ -104,6 +192,107 @@ function Chat() {
               </div>
 
             </div>
+          )}
+
+        </div>
+
+        {/* =================================================
+            CHAT HISTORY
+        ================================================= */}
+
+        <div className="mt-12">
+
+          <div className="flex justify-between items-center mb-6">
+
+            <h2 className="text-3xl font-bold text-gray-900">
+              📚 Chat History
+            </h2>
+
+            {history.length > 0 && (
+              <button
+                onClick={handleDeleteAll}
+                className="bg-red-500 hover:bg-red-600 text-white px-5 py-3 rounded-xl font-semibold transition"
+              >
+                🗑️ Delete All
+              </button>
+            )}
+
+          </div>
+
+          {/* Loading */}
+          {historyLoading ? (
+
+            <div className="bg-white rounded-2xl shadow-md border border-gray-200 p-6 text-gray-500 text-lg">
+              Loading chat history...
+            </div>
+
+          ) : history.length === 0 ? (
+
+            <div className="bg-white rounded-2xl shadow-md border border-gray-200 p-6 text-gray-500 text-lg">
+              No chat history yet.
+            </div>
+
+          ) : (
+
+            <div className="space-y-6">
+
+              {history.map((item) => (
+
+                <div
+                  key={item.id}
+                  className="bg-white rounded-2xl shadow-md border border-gray-200 p-6"
+                >
+
+                  {/* Question */}
+                  <div className="mb-4">
+
+                    <div className="flex justify-between items-start gap-4">
+
+                      <h3 className="text-lg font-bold text-gray-900 mb-2">
+                        🧑‍🎓 Question
+                      </h3>
+
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        className="text-red-500 hover:text-red-700 font-semibold text-sm"
+                      >
+                        🗑️ Delete
+                      </button>
+
+                    </div>
+
+                    <p className="text-gray-700 text-lg">
+                      {item.question}
+                    </p>
+
+                  </div>
+
+                  {/* Answer */}
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-5">
+
+                    <h3 className="text-lg font-bold text-indigo-700 mb-2">
+                      🤖 AI Answer
+                    </h3>
+
+                    <p className="text-gray-800 leading-7 whitespace-pre-wrap">
+                      {item.answer}
+                    </p>
+
+                  </div>
+
+                  {/* Date */}
+                  {item.created_at && (
+                    <p className="text-sm text-gray-400 mt-4">
+                      {new Date(item.created_at).toLocaleString()}
+                    </p>
+                  )}
+
+                </div>
+
+              ))}
+
+            </div>
+
           )}
 
         </div>
