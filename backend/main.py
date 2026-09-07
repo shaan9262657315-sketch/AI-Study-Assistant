@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import Base, engine, SessionLocal
 from models import PDFDocument, FlashcardHistory
@@ -24,6 +24,8 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "https://ai-study-assistant-frontend-u7wu.onrender.com",
+        "https://localhost",
+        "capacitor://localhost",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -57,3 +59,4 @@ def root():
     return {
         "message": "AI Study Assistant Backend is running"
     }
+
