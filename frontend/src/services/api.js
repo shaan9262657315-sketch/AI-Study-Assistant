@@ -1,6 +1,6 @@
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
-  "https://ai-study-assistant-backend-4d18.onrender.com";
+  "https://ai-study-assistant-backend-4dl8.onrender.com";
 
 export const getToken = () => {
   return localStorage.getItem("token");
