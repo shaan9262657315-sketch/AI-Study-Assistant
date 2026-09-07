@@ -524,8 +524,8 @@ Then give a short explanation.
 
             model=GEMINI_MODEL,
 
-            contents=prompt
-
+            contents=prompt,
+            config={"response_mime_type": "application/json"}
         )
 
         if response.text:
@@ -971,4 +971,6 @@ def get_ai_provider():
             OLLAMA_MODEL
 
     }
+
+
 
