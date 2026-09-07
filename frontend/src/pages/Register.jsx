@@ -1,3 +1,4 @@
+﻿import logo from "../../assets/logo.png";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { registerUser } from "../services/api";
@@ -105,9 +106,7 @@ function Register() {
 
           <div className="flex justify-center mb-5">
 
-            <div className="w-20 h-20 bg-indigo-600 rounded-2xl flex items-center justify-center text-4xl shadow-lg">
-              📚
-            </div>
+            <img src={logo} alt="AI Study Assistant" className="w-20 h-20 rounded-2xl object-cover shadow-lg" />
 
           </div>
 
@@ -224,7 +223,7 @@ function Register() {
                       : "Show password"
                   }
                 >
-                  {showPassword ? "🔓" : "🔒"}
+                  {showPassword ? "Hide" : "Show"}
                 </button>
 
               </div>
@@ -359,3 +358,6 @@ function Register() {
 }
 
 export default Register;
+
+
+

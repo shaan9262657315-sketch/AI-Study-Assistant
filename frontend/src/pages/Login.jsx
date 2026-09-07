@@ -1,3 +1,4 @@
+import logo from "../../assets/logo.png";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { loginUser, setToken } from "../services/api";
@@ -83,9 +84,7 @@ function Login() {
 
           <div className="flex justify-center mb-6">
 
-            <div className="w-28 h-28 bg-violet-200 rounded-2xl flex items-center justify-center text-6xl shadow-lg">
-              📚
-            </div>
+            <img src={logo} alt="AI Study Assistant" className="w-28 h-28 rounded-2xl object-cover shadow-lg" />
 
           </div>
 
@@ -183,7 +182,7 @@ function Login() {
                       : "Show password"
                   }
                 >
-                  {showPassword ? "👁️" : "👁️‍🗨️"}
+                  {showPassword ? "Hide" : "Show"}
                 </button>
 
               </div>
@@ -215,7 +214,7 @@ function Login() {
             >
 
               {loading
-                ? "🤖 Logging in..."
+                ? "Logging in..."
                 : "Login"}
 
             </button>
@@ -249,3 +248,5 @@ function Login() {
 }
 
 export default Login;
+
+
